@@ -1,0 +1,6 @@
+mis_datos.txt
+MI_CALENDARIO_PRIVADO.txt
+.env
+__pycache__/
+*.pyc
+.DS_Store
