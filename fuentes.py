@@ -178,9 +178,14 @@ FRASES = [
     "aguantame",
     "laburando",
 ]
-ANIM_SEGUNDOS = 4.0      # cada cuanto se mueve el texto
+ANIM_SEGUNDOS = 6.5      # cada cuanto se mueve el texto
 ANIM_PUNTOS = 3          # llega a tres puntos y vuelve a cero
-ANIM_CADA_FRASE = 4      # cada cuantos movimientos cambia la frase
+ANIM_CADA_FRASE = 3      # cada cuantos movimientos cambia la frase
+
+# Cuando el recordatorio es tuyo (lo pediste con /recordar o hablando), suena
+# UNA sola vez, a la hora que pediste.  Los perfiles de insistencia son para
+# las entregas de los profesores, no para tus apuntes.
+AVISOS_DE_MIS_RECORDATORIOS = [0]
 
 # ---------------------------------------------------------------- filtros
 # Ojo: aca NO va "#".  Un ancla suelta ya se descarta sola, y poner "#"
