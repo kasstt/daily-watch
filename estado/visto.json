@@ -1,0 +1,93 @@
+{
+ "_chat": "7371387588",
+ "archivados": {},
+ "arrancado": true,
+ "ausentes": {},
+ "avisos": {
+  "mio_1785759296": [
+   "72",
+   "24",
+   "3"
+  ]
+ },
+ "basura": [],
+ "callados": {
+  "": {
+   "cuenta": 0,
+   "hasta": "2026-08-17"
+  }
+ },
+ "config": {
+  "ia": true,
+  "noche": true,
+  "pausa_hasta": "2026-08-03 10:21",
+  "resumen": {
+   "activo": true,
+   "cada": "semana",
+   "dia": "viernes",
+   "hora": "20:00"
+  },
+  "teclado": false
+ },
+ "esperando_nota": null,
+ "fallas": {},
+ "fallas_ia": 0,
+ "grupos": {
+  "45def8adfd92342e": {
+   "cantidad": 0,
+   "emoji": "📘",
+   "fuente": "A",
+   "id": "97852",
+   "nombre": "CÁLCULO INTEGRAL",
+   "url": "https://adecca.ubiobio.cl/curso/97852",
+   "visto": "2026-08-03 07:36"
+  }
+ },
+ "items": {},
+ "novedades": [],
+ "panel_donde": "p:avisos",
+ "panel_id": 215,
+ "pendientes_ia": {},
+ "perfiles": {},
+ "tareas": {
+  "mio_1785759296": {
+   "clave": "",
+   "dormida_hasta": "2026-08-03 10:29",
+   "grupo": "",
+   "hecho": false,
+   "mio": true,
+   "nota": "",
+   "tarjeta": "📘 <b>Recordatorio</b>\n⏰ faltan <b>54 minutos</b>\npapi\nvence lun 3 ago 08:14",
+   "titulo": "papi",
+   "url": "",
+   "vence": "2026-08-03 08:14"
+  },
+  "mio_1786360440": {
+   "clave": "",
+   "grupo": "",
+   "hecho": false,
+   "mio": true,
+   "nota": "",
+   "titulo": "papu",
+   "url": "",
+   "vence": "2026-08-10 07:14"
+  },
+  "mio_1786360680": {
+   "clave": "",
+   "grupo": "",
+   "hecho": false,
+   "mio": true,
+   "nota": "",
+   "titulo": "osi",
+   "url": "",
+   "vence": "2026-08-10 07:18"
+  }
+ },
+ "tg_offset": 791138650,
+ "ultima_corrida": "03/08 07:37",
+ "ultimo_error_ia": "la clave no sirve o no tiene permiso. Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.googl",
+ "ultimo_info": 229,
+ "ultimo_latido": "",
+ "ultimo_resumen": "",
+ "version": 2
+}
