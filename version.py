@@ -1,35 +1,35 @@
 # -*- coding: utf-8 -*-
-"""Que version del bot esta corriendo y que trae de nuevo.
+"""Que version del bot esta corriendo.
 
-Cuando aplico un parche, cambio estos dos valores.  El bot compara contra lo
-que tiene guardado y, si no coinciden, te manda un aviso al chat.  Ese aviso
-NO se borra solo: queda en el historial como comprobante de que el parche
-entro y de que hay que probarlo.
+Cada vez que se aplica un parche, el bot manda al chat un aviso con esta
+lista.  Ese mensaje no se borra nunca: sirve de confirmacion de que la
+actualizacion llego, y de lista para ir probando.
 """
 
-VERSION = "5.0"
+VERSION = "5.1"
 FECHA = "03-08-2026"
-TITULO = "ve el material escondido en JavaScript"
+TITULO = "te manda los documentos aunque el enlace no diga la extension"
 
-# Lo que cambio. Una linea por cosa, en criollo.
 CAMBIOS = [
-    "Ahora ve el material que la plataforma no enlaza y arma con JavaScript.",
-    "Entra adentro de cada seccion del ramo y encuentra los archivos adjuntos.",
-    "Ya no descarta los enlaces con ancla, que antes tiraba todos a la basura.",
-    "Lee lo que cuelga de un onclick o de un atributo data-*.",
-    "Si la pagina cambia y no puede decir que cambio, igual te avisa.",
-    "Panel reordenado por uso, Pendientes primero.",
-    "Tus mensajes se borran a los 5 segundos, no al instante.",
-    "Boton de posponer 1 hora, ademas del de 3.",
+    "Ve el material escondido en JavaScript: antes la portada del ramo no",
+    "  enlazaba nada y el bot la veia vacia. Ahora entra a cada seccion.",
+    "Te manda el documento aunque el enlace no diga si es pdf, word, excel",
+    "  o powerpoint. Le pregunta al servidor y le pone la extension correcta.",
+    "Boton nuevo: Mandame los archivos. Te deja los documentos del ramo en",
+    "  el chat sin que entres a la pagina.",
+    "Ver material y Resumen ya no dicen lo mismo. Material es la lista",
+    "  completa por tipo. Resumen es lo que entendio la IA.",
+    "Si la IA no puede resumir, ahora te dice por que en una linea.",
+    "El actualizador entiende la direccion del repositorio en cualquier",
+    "  formato y te pregunta lo que falte, sin editar archivos a mano.",
 ]
 
-# Que conviene probar despues de este parche, para hacer de tester.
 A_PROBAR = [
-    "Tocar Panel, Ramos, tu ramo, Ver material: tiene que listar algo.",
-    "Tocar /revisar: tiene que contestar que miro.",
-    "Esperar a que suban algo nuevo y ver si llega el aviso.",
+    "Panel, Ramos, un ramo: fijate que aparezca el conteo de documentos.",
+    "Toca Mandame los archivos y mira si te llegan al chat.",
+    "Toca Ver material y despues Resumen con IA: tienen que ser distintos.",
 ]
 
 
 def etiqueta():
-    return "v%s" % VERSION
+    return "v%s (%s)" % (VERSION, TITULO)
