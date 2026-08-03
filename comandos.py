@@ -21,10 +21,9 @@ import panel as P
 
 # El orden importa: asi se muestran en el menu del chat, de mas usado a menos.
 MENU = [
-    ("preguntar", "pregunt\u00e1 por tus ramos"),
-    ("panel", "todo a botones"),
-    ("ultimo", "lo \u00faltimo que subieron"),
     ("pendientes", "lo que te falta"),
+    ("ultimo", "lo \u00faltimo que subieron"),
+    ("panel", "todo a botones"),
     ("semana", "los \u00faltimos 7 d\u00edas"),
     ("resumen", "resumen de un ramo"),
     ("pausa", "callate unas horas"),
@@ -42,7 +41,6 @@ MENU = [
 # Lo que va DESPUES del comando, cuando lleva algo.  Se ve solo en /ayuda,
 # pegado al comando, para que no parezca un comando repetido.
 COLA = {
-    "preguntar": "que entrego esta semana",
     "resumen": "ramo calculo",
     "pausa": "3",
     "perfil": "apretado termo",
@@ -68,47 +66,34 @@ def texto_ayuda():
     for c, d in MENU:
         cola = COLA.get(c)
         firma = "/%s %s" % (c, cola) if cola else "/" + c
-        # Sin <code>: asi Telegram los deja apretables.
-        lineas.append("%s \u00b7 %s" % (firma, d))
+        lineas.append("<code>%s</code> \u00b7 %s" % (firma, d))
     lineas += [
         "",
         "<b>/resumen</b>",
-        "/resumen ramo calculo \u00b7 ese ramo, con IA",
-        "/resumen \u00b7 prende o apaga el semanal",
-        "/resumen viernes 20:00 \u00b7 cambia cu\u00e1ndo llega",
-        "/resumen diario 21:00 \u00b7 todos los d\u00edas",
-        "",
-        "<b>Recordatorios</b>",
-        "/recordar 20m sacar la ropa \u00b7 en minutos",
-        "/recordar 3h mandar el informe \u00b7 en horas",
-        "/recordar viernes 18:00 estudiar \u00b7 dia y hora",
+        "<code>/resumen ramo calculo</code> \u00b7 ese ramo, con IA",
+        "<code>/resumen</code> \u00b7 prende o apaga el semanal",
+        "<code>/resumen viernes 20:00</code> \u00b7 cambia cu\u00e1ndo llega",
+        "<code>/resumen diario 21:00</code> \u00b7 todos los d\u00edas",
         "",
         "<b>Perfiles</b> \u00b7 suave, normal, apretado, diario",
-        "/perfil apretado termo \u00b7 uno por ramo",
+        "<code>/perfil apretado termo</code> \u00b7 uno por ramo",
     ]
     return "\n".join(lineas)
 
 
 # ---------------------------------------------------------------- fechas
 def cuando(texto, ahora):
-    """Entiende 'viernes 18:00', 'manana 20:00', '2m', '3h', '2d' y 'HH:MM'.
+    """Entiende 'viernes 18:00', 'manana 20:00', '3h', '2d' y 'HH:MM'.
     Devuelve (fecha, resto) o (None, texto)."""
     p = texto.split()
     if not p:
         return None, texto
     uno = pelado(p[0])
 
-    # '2m' minutos, '3h' horas, '2d' dias.  Tambien 'min', 'hs', 'dias'.
-    m = re.fullmatch(r"(\d+)\s*(m|min|mins|minutos?|h|hs|horas?|d|dias?)", uno)
+    m = re.fullmatch(r"(\d+)([hd])", uno)
     if m:
         n = int(m.group(1))
-        letra = m.group(2)[0]
-        if letra == "m":
-            salto = dt.timedelta(minutes=n)
-        elif letra == "h":
-            salto = dt.timedelta(hours=n)
-        else:
-            salto = dt.timedelta(days=n)
+        salto = dt.timedelta(hours=n) if m.group(2) == "h" else dt.timedelta(days=n)
         return ahora + salto, " ".join(p[1:])
 
     resto = p[1:]
@@ -228,8 +213,8 @@ def _callar(estado, resto, acc, ahora):
 def _recordar(estado, resto, ahora):
     fecha, texto = cuando(resto, ahora)
     if not fecha:
-        return ("Decime cu\u00e1ndo. Por ejemplo:\n/recordar 20m sacar la ropa\n"
-                "/recordar 3h mandar el informe\n/recordar viernes 18:00 estudiar")
+        return ("Decime cu\u00e1ndo. Por ejemplo:\n/recordar viernes 18:00 estudiar\n"
+                "/recordar 3h mandar el informe")
     if not texto.strip():
         return "Y qu\u00e9 te recuerdo?"
     idt = "mio_%d" % int(fecha.timestamp())
@@ -271,9 +256,10 @@ def basura(estado, mensaje_id, segundos=None):
 
 
 def borrar_ya(estado, mensaje_id):
-    """Lo tuyo: comandos y toques de la botonera. No aportan nada al historial."""
-    if _limpiar() and mensaje_id:
-        N.borrar(mensaje_id)
+    """Lo tuyo: comandos y toques de la botonera. No aportan nada al historial.
+    No se borra al instante: se le dan unos segundos para que alcances a ver
+    que lo mandaste."""
+    basura(estado, mensaje_id, getattr(CFG, "SEGUNDOS_MIS_MENSAJES", 5))
 
 
 def efimero(estado, texto, botones=None):
@@ -307,11 +293,20 @@ def _boton_de_tarjeta(estado, dato, acc, ahora):
         t["hecho"] = not t.get("hecho")
         return ("Marcada como hecha" if t["hecho"] else "Vuelve a pendientes"), cual
 
-    if accion == "dormir":
+    if accion in ("dormir", "dormir1"):
         if not t:
             return "Ya no la tengo", None
-        t["dormida_hasta"] = (ahora + dt.timedelta(hours=3)).strftime("%Y-%m-%d %H:%M")
-        return "Te la recuerdo en 3 horas", cual
+        horas = 1 if accion == "dormir1" else 3
+        nueva = ahora + dt.timedelta(hours=horas)
+        if t.get("mio"):
+            # Un recordatorio tuyo se MUEVE de fecha. Callarlo dejando la fecha
+            # vieja no sirve de nada: seguia figurando como vencido.
+            t["vence"] = nueva.strftime("%Y-%m-%d %H:%M")
+            t.pop("dormida_hasta", None)
+            estado.setdefault("avisos", {}).pop(cual, None)
+        else:
+            t["dormida_hasta"] = nueva.strftime("%Y-%m-%d %H:%M")
+        return "Te la recuerdo en %d hora%s" % (horas, "" if horas == 1 else "s"), cual
 
     if accion == "nota":
         if not t:
@@ -431,7 +426,7 @@ def atender(estado, acc, ahora, espera=0):
 
         if cmd in ("start", "panel", "menu"):
             acc["abrir_panel"](saludar=(cmd == "start"))
-        elif cmd == "atajos":
+        elif cmd in ("atajos", "teclado", "botones"):
             c = estado.setdefault("config", {})
             c["teclado"] = not c.get("teclado", getattr(CFG, "TECLADO_FIJO", True))
             if c["teclado"]:
@@ -447,8 +442,10 @@ def atender(estado, acc, ahora, espera=0):
             r = ("Borro solo lo que no aporta: tus comandos y mis confirmaciones."
                  if c["limpiar"] else "Ya no borro nada del chat.")
         elif cmd in ("preguntar", "preg"):
+            # Atajo viejo, ya no esta en el menu: se le escribe y listo.
             if not resto:
-                r = "Escribime la pregunta y ya. No hace falta el comando."
+                r = ("No hace falta el comando: escribime la pregunta directo "
+                     "en el chat y te contesto.")
             elif acc.get("preguntar"):
                 acc["preguntar"](resto)
             else:
