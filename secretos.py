@@ -17,6 +17,8 @@ CLAVES = [
     "CAL_URL_B",
     "TG_TOKEN", "TG_CHAT",
     "GH_TOKEN", "IA_KEY",
+    "GH_REPO",          # solo para el actualizador: usuario/repositorio
+    "GH_RAMA",          # solo para el actualizador: casi siempre main
     "GIST_ID",          # opcional: si va vacio, el bot crea el gist solo
 ]
 
