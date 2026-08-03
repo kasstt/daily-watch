@@ -4,3 +4,5 @@ MI_CALENDARIO_PRIVADO.txt
 __pycache__/
 *.pyc
 .DS_Store
+respaldos/
+*.zip
