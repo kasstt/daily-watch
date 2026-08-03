@@ -54,8 +54,8 @@ def _raiz(estado, acc):
     pie = "\n\nactualizado %s" % d["ultima"]
 
     botones = N.teclado([
-        [("\U0001F4E5 Novedades%s" % (" (%d)" % d["nuevas"] if d["nuevas"] else ""), "p:nov")],
-        [("\U0001F4CC Pendientes%s" % (" (%d)" % d["pendientes"] if d["pendientes"] else ""), "p:pen"),
+        [("\U0001F4CC Pendientes%s" % (" (%d)" % d["pendientes"] if d["pendientes"] else ""), "p:pen")],
+        [("\U0001F4E5 Novedades%s" % (" (%d)" % d["nuevas"] if d["nuevas"] else ""), "p:nov"),
          ("\U0001F4C5 Semana", "p:sem")],
         [("\U0001F4DA Ramos", "p:ramos"), ("\U0001F514 Avisos", "p:avisos")],
         [("\u23F8 Pausa: %s" % ("s\u00ed" if pausa else "no"), "t:pausa"),
@@ -150,11 +150,13 @@ def _ajustes(estado, acc):
              "Memoria: %s\n"
              "IA: %s\n"
              "Silenciados: %d" % (d["memoria"], d["ia"], d["silenciados"]))
+    teclado = _cfg(estado).get("teclado", getattr(CFG, "TECLADO_FIJO", True))
     botones = N.teclado([
         [("\U0001F50D Revisar ahora", "a:revisar")],
-        [("\U0001F4E4 Exportar todo", "a:exportar")],
-        [("\U0001FA7A Diagn\u00f3stico", "p:diag")],
         [("\u2753 Ayuda", "p:ayuda")],
+        [("\u2328\uFE0F Atajos de abajo: %s" % _si_no(teclado), "t:teclado")],
+        [("\U0001FA7A Diagn\u00f3stico", "p:diag")],
+        [("\U0001F4E4 Exportar todo", "a:exportar")],
         [("\u2B05\uFE0F Volver", "p:raiz")],
     ])
     return texto, botones
@@ -237,6 +239,16 @@ def toque(estado, dato, acc, ahora):
         hasta = ahora + dt.timedelta(hours=3)
         cfg["pausa_hasta"] = hasta.strftime("%Y-%m-%d %H:%M")
         return "Callado hasta las %s" % hasta.strftime("%H:%M"), None
+
+    if dato == "t:teclado":
+        cfg["teclado"] = not cfg.get("teclado", getattr(CFG, "TECLADO_FIJO", True))
+        if cfg["teclado"]:
+            # Este mensaje NO se borra: la botonera de abajo vive pegada al
+            # mensaje que la trajo.
+            N.enviar("Atajos puestos abajo.", teclado_fijo=True)
+            return "Atajos puestos", None
+        N.quitar_teclado()
+        return "Atajos sacados", None
 
     if dato == "t:resumen":
         r = _resumen_cfg(estado)
