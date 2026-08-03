@@ -98,6 +98,7 @@ HORAS_PARA_RECORDAR_VISTO = 20
 # sus propias confirmaciones cortas.  Los avisos de material NUNCA se borran.
 LIMPIAR_CHAT = True
 SEGUNDOS_BASURA = 25         # cuanto queda a la vista una confirmacion
+SEGUNDOS_MIS_MENSAJES = 5    # cuanto queda a la vista lo que escribis vos
 TECLADO_FIJO = True          # la botonera de abajo. Se prende con /atajos
 
 # ---------------------------------------------------------------- ritmo
@@ -108,6 +109,19 @@ TECLADO_FIJO = True          # la botonera de abajo. Se prende con /atajos
 DESPIERTO = (7, 2)
 HORAS_MAXIMAS = 5.5          # lo maximo que dura un turno seguido
 MINUTOS_DORMIDO = 4          # cuanto vive una corrida fuera de la ventana
+
+# --------------------------------------------------- que tan adentro mira
+# La portada del ramo casi nunca muestra el archivo: muestra la actividad,
+# y el archivo esta adentro.  Por eso entra un nivel mas.
+PROFUNDIDAD = 1                  # cuantos niveles entra dentro del ramo
+PAGINAS_POR_RAMO = 14            # tope de paginas por ramo, para no abusar
+MINUTOS_EXPLORACION_PROFUNDA = 20  # cada cuanto vuelve a entrar adentro
+TOPE_PRIMERA_TANDA = 10          # si la primera mirada honda trae mas, no grita
+
+# El ultimo seguro: si la pagina del ramo cambio y no supe decir en que,
+# igual te aviso.  Vale mas un aviso de mas que perderte una guia.
+AVISAR_CAMBIO_CIEGO = True
+HORAS_ENTRE_AVISOS_CIEGOS = 6
 
 SEGUNDOS_ENTRE_REVISIONES = 90   # cada cuanto mira las plataformas
 ESPERA_CHAT = 20             # cuanto se queda escuchando el chat de una
@@ -164,16 +178,18 @@ FRASES = [
     "aguantame",
     "laburando",
 ]
-ANIM_SEGUNDOS = 2.4      # cada cuanto se mueve el texto
+ANIM_SEGUNDOS = 4.0      # cada cuanto se mueve el texto
 ANIM_PUNTOS = 3          # llega a tres puntos y vuelve a cero
 ANIM_CADA_FRASE = 4      # cada cuantos movimientos cambia la frase
 
 # ---------------------------------------------------------------- filtros
+# Ojo: aca NO va "#".  Un ancla suelta ya se descarta sola, y poner "#"
+# tiraba a la basura cualquier direccion que tuviera un ancla al final,
+# que es justo como algunas plataformas enlazan el material nuevo.
 IGNORAR = [
     "/session/", "/perfil", "/logout", "/login", "/alumnos",
     "/calificaciones", "/meeting/", "/cursos/publicos",
     "/calendario", "/organizarcarpetas", "/crear_modulo",
-    "javascript:", "mailto:", "#",
 ]
 
 PALABRAS_MENU = [
