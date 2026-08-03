@@ -160,8 +160,15 @@ EXTENSIONES = r"(pdf|docx?|pptx?|xlsx?|zip|rar|txt|csv|jpe?g|png|mp4)"
 
 
 def ignorar(href):
-    h = (href or "").lower()
-    return (not h) or any(x in h for x in CFG.IGNORAR)
+    """True si el enlace no vale la pena.  Ojo: un ancla suelta (#tab) no
+    sirve, pero una direccion de verdad con un ancla al final SI."""
+    h = (href or "").strip().lower()
+    if not h or h in ("#", "/"):
+        return True
+    if h.startswith("#") or h.startswith("javascript:") or h.startswith("mailto:"):
+        return True
+    limpio_h = h.split("#")[0]
+    return any(x in limpio_h for x in CFG.IGNORAR)
 
 
 def es_menu(texto):
@@ -185,32 +192,93 @@ def icono(tipo):
             "archivo": "\U0001F4C4"}.get(tipo, "\U0001F4CE")
 
 
+# Muchas plataformas no usan enlaces de verdad: cuelgan la direccion de un
+# onclick o de un atributo data-*.  Antes eso era invisible para el bot.
+ATRIBUTOS_CON_URL = ("data-href", "data-url", "data-src", "data-file",
+                     "data-archivo", "data-download", "data-link", "data-ruta")
+RE_URL_EN_JS = re.compile(
+    r"""(?:href|src|url|open|location(?:\.href)?)\s*[=(]\s*['"]([^'"]{4,300})['"]""", re.I)
+RE_URL_SUELTA = re.compile(r"""['"]((?:https?://|/)[^'"\s]{4,300})['"]""")
+
+
+def _urls_del_tag(tag):
+    """Saca direcciones escondidas en atributos data-* y en el onclick."""
+    salida = []
+    try:
+        for att in ATRIBUTOS_CON_URL:
+            v = (tag.get(att) or "").strip()
+            if len(v) > 3:
+                salida.append(v)
+        js = " ".join([(tag.get("onclick") or ""), (tag.get("data-action") or "")])
+        if js.strip():
+            for m in RE_URL_EN_JS.finditer(js):
+                salida.append(m.group(1))
+            if not salida:
+                for m in RE_URL_SUELTA.finditer(js):
+                    salida.append(m.group(1))
+    except Exception:
+        return []
+    return salida
+
+
 def cosas_de_la_pagina(html, base, propia=None):
-    """Saca de la pagina de un ramo todo lo que parezca material."""
+    """Saca de una pagina todo lo que parezca material.  Mira los enlaces
+    normales, los que estan escondidos en atributos o en el onclick, y las
+    fichas de actividad de la plataforma educativa."""
     sopa = BeautifulSoup(html, "html.parser")
     salida, vistos = [], set()
 
-    for a in sopa.find_all("a", href=True):
-        href = a["href"].strip()
-        texto = limpio(a.get_text(" "))
-        if not texto or len(texto) < 3 or ignorar(href) or es_menu(texto):
-            continue
-        url = urljoin(base, href)
+    def sumar(texto, href, tag=None, pista="", descripcion=None):
+        texto = limpio(texto)
+        if not texto or len(texto) < 3 or es_menu(texto):
+            return
+        if ignorar(href):
+            return
+        try:
+            url = urljoin(base, href.strip())
+        except Exception:
+            return
+        if not url.lower().startswith(("http://", "https://")):
+            return
         if propia and url.rstrip("/") == propia.rstrip("/"):
-            continue
+            return
         if url in vistos:
-            continue
+            return
         vistos.add(url)
+        if descripcion is None:
+            descripcion = _descripcion_cerca(tag) if tag is not None else ""
         salida.append({"titulo": texto[:160], "url": url,
-                       "tipo": tipo_de(href, texto),
-                       "descripcion": _descripcion_cerca(a)})
+                       "tipo": tipo_de(pista + " " + href, texto),
+                       "descripcion": descripcion})
+
+    for a in sopa.find_all("a"):
+        texto = a.get_text(" ")
+        href = (a.get("href") or "").strip()
+        if href:
+            sumar(texto, href, tag=a)
+        for u in _urls_del_tag(a):
+            sumar(texto, u, tag=a)
+
+    # Botones, filas de tabla y cajas que se comportan como enlaces.
+    for tag in sopa.find_all(["button", "tr", "li", "div", "td", "span", "i", "img"]):
+        urls = _urls_del_tag(tag)
+        if not urls:
+            continue
+        texto = limpio(tag.get_text(" "))
+        if not texto:
+            texto = limpio(tag.get("title") or tag.get("alt") or "")
+        for u in urls:
+            sumar(texto, u, tag=tag, pista=" ".join(tag.get("class", [])))
 
     for li in sopa.select("li.activity"):
         nombre = li.select_one(".instancename")
         a = li.find("a", href=True)
         if not nombre or not a:
             continue
-        url = urljoin(base, a["href"])
+        try:
+            url = urljoin(base, a["href"])
+        except Exception:
+            continue
         if url in vistos:
             continue
         vistos.add(url)
@@ -233,6 +301,26 @@ def _descripcion_cerca(a):
         propio = limpio(a.get_text(" "))
         texto = texto.replace(propio, " ", 1)
         return limpio(texto)[:4000]
+    except Exception:
+        return ""
+
+
+# ------------------------------------------------- huella de una pagina
+# Sirve para el ultimo seguro: si la pagina cambio pero no supe decir en
+# que, igual te aviso.  Le saco relojes, numeros largos y fichas de sesion
+# para que no cambie sola cada vez que se carga.
+RE_VOLATIL = re.compile(
+    r"\d{1,2}:\d{2}(:\d{2})?|\d{6,}|sesskey|csrf|token|jsessionid", re.I)
+
+
+def firma_de_pagina(html):
+    try:
+        sopa = BeautifulSoup(html, "html.parser")
+        for t in sopa(["script", "style", "noscript"]):
+            t.decompose()
+        texto = pelado(limpio(sopa.get_text(" ")))
+        texto = RE_VOLATIL.sub(" ", texto)
+        return huella("pag", " ".join(texto.split()))
     except Exception:
         return ""
 
@@ -279,6 +367,78 @@ def fecha_en_texto(texto, hoy):
 
 
 # =====================================================================
+#  recorrer un ramo por dentro
+# =====================================================================
+# La portada del ramo no siempre muestra lo que subieron.  Muchas veces la
+# actividad nueva es una pagina aparte y el archivo esta adentro.  Asi que
+# entro un nivel mas, pero solo dentro del mismo ramo y con tope.
+_ULTIMO_PROFUNDO = {}
+
+
+def _toca_profundo(id_ramo, firma_raiz):
+    """Entrar adentro de cada actividad en cada vuelta seria maltratar la
+    plataforma.  Entro cuando la portada cambio, y cada tanto igual."""
+    minutos = getattr(CFG, "MINUTOS_EXPLORACION_PROFUNDA", 20)
+    ficha = _ULTIMO_PROFUNDO.get(id_ramo)
+    if (ficha is None or ficha.get("firma") != firma_raiz
+            or time.time() - ficha.get("t", 0) >= minutos * 60):
+        _ULTIMO_PROFUNDO[id_ramo] = {"firma": firma_raiz, "t": time.time()}
+        return True
+    return False
+
+
+def _es_del_ramo(url, base, id_ramo):
+    u = (url or "").lower()
+    if not u.startswith(base.rstrip("/").lower()):
+        return False
+    rid = str(id_ramo or "")
+    return bool(rid) and rid in u
+
+
+def explorar_ramo(s, base, g):
+    """Devuelve (items, firma).  items=None significa 'no pude leer', que no
+    es lo mismo que 'no hay nada'."""
+    tope = getattr(CFG, "PAGINAS_POR_RAMO", 14)
+    hondo = getattr(CFG, "PROFUNDIDAD", 1)
+    raiz = g["url"]
+    try:
+        html = s.get(raiz, timeout=CFG.ESPERA_RED).text
+    except Exception:
+        return None, ""
+
+    firmas = [firma_de_pagina(html)]
+    items = {}
+    for it in cosas_de_la_pagina(html, base, propia=raiz):
+        items.setdefault(it["url"], it)
+
+    if hondo <= 0 or not _toca_profundo(str(g.get("id")), firmas[0]):
+        return list(items.values()), huella("firma", *firmas)
+
+    vistas = {raiz}
+    cola = [(it["url"], 1) for it in items.values()
+            if _es_del_ramo(it["url"], base, g.get("id"))
+            and not es_bajable(it["url"], it["titulo"])]
+    while cola and len(vistas) < tope:
+        url, nivel = cola.pop(0)
+        if url in vistas:
+            continue
+        vistas.add(url)
+        try:
+            dentro = s.get(url, timeout=CFG.ESPERA_RED).text
+        except Exception:
+            continue
+        firmas.append(firma_de_pagina(dentro))
+        for it in cosas_de_la_pagina(dentro, base, propia=url):
+            if it["url"] in items:
+                continue
+            items[it["url"]] = it
+            if (nivel < hondo and not es_bajable(it["url"], it["titulo"])
+                    and _es_del_ramo(it["url"], base, g.get("id"))):
+                cola.append((it["url"], nivel + 1))
+    return list(items.values()), huella("firma", *sorted(firmas))
+
+
+# =====================================================================
 #  las dos plataformas
 # =====================================================================
 def entrar_b64(s, base, usuario, clave):
@@ -316,11 +476,7 @@ def leer_b64(s, base):
     if activos is None:
         return None, []
     for g in activos:
-        try:
-            html = s.get(g["url"], timeout=CFG.ESPERA_RED).text
-            g["items"] = cosas_de_la_pagina(html, base, propia=g["url"])
-        except Exception:
-            g["items"] = None      # None = no pude leer, distinto de vacio
+        g["items"], g["firma"] = explorar_ramo(s, base, g)
     viejos = _ramos_b64(s, base, viejos=True) or []
     return activos, [x["id"] for x in viejos]
 
@@ -352,11 +508,7 @@ def leer_aula(s, base):
         grupos.append({"id": m.group(1), "nombre": nombre[:120],
                        "url": urljoin(base, a["href"])})
     for g in grupos:
-        try:
-            h = s.get(g["url"], timeout=CFG.ESPERA_RED).text
-            g["items"] = cosas_de_la_pagina(h, base, propia=g["url"])
-        except Exception:
-            g["items"] = None
+        g["items"], g["firma"] = explorar_ramo(s, base, g)
     return grupos, []
 
 
@@ -550,12 +702,13 @@ class Vigilante(object):
             primero = "\u21A9\uFE0F deshacer"
         else:
             primero = "\u2705 hecho" if es_tarea else "\U0001F440 lo vi"
-        return N.teclado([[
-            (primero, "hecho:" + tarea_id),
-            ("\u23F0 3h", "dormir:" + tarea_id),
-            ("\U0001F4DD nota", "nota:" + tarea_id),
-            ("\U0001F515", "basta:" + clave),
-        ]])
+        return N.teclado([
+            [(primero, "hecho:" + tarea_id),
+             ("\U0001F4DD nota", "nota:" + tarea_id)],
+            [("\u23F0 1h", "dormir1:" + tarea_id),
+             ("\u23F0 3h", "dormir:" + tarea_id),
+             ("\U0001F515", "basta:" + clave)],
+        ])
 
     def redibujar_tarjeta(self, tarea_id, mensaje_id=None):
         t = self.estado.get("tareas", {}).get(tarea_id)
@@ -897,26 +1050,6 @@ class Vigilante(object):
                             ", %d cosas nuevas" % nuevas if nuevas else ", sin novedad"))
         return prefijo + "\U0001F515 <b>SILENCIADOS</b>\n" + "\n".join(filas)
 
-    def por_que_no_hay_ia(self):
-        """Una linea corta que dice por que la IA no esta trabajando.
-
-        Sirve sobre todo cuando el bot corre lejos: ahi no ves la consola,
-        asi que el motivo tiene que llegar al chat."""
-        crudo = os.environ.get("IA_KEY", "")
-        if not crudo.strip():
-            return "no hay clave cargada (falta el secreto IA_KEY)"
-        if crudo != crudo.strip() or crudo.strip()[0] in "'\"":
-            return "la clave tiene comillas o espacios de mas"
-        if not self.cfg().get("ia", True):
-            return "la apagaste vos con /ia"
-        fallas = self.estado.get("fallas_ia", 0)
-        ultimo = self.estado.get("ultimo_error_ia", "")
-        if fallas >= CFG.IA["fallas_para_apagar"]:
-            return "se apago sola tras %d intentos. %s" % (fallas, ultimo or "")
-        if ultimo:
-            return "%s (van %d)" % (ultimo, fallas)
-        return ""
-
     def texto_diagnostico(self):
         d = self.tablero()
         lineas = [
@@ -925,12 +1058,6 @@ class Vigilante(object):
             "ramos: %d \u00b7 pendientes: %d" % (d["ramos"], d["pendientes"]),
             "memoria: %s" % d["memoria"],
             "IA: %s" % d["ia"],
-            "",
-        ]
-        motivo = self.por_que_no_hay_ia()
-        if motivo:
-            lineas.append("\u26A0\uFE0F IA: %s" % motivo)
-        lineas += [
             "pausa: %s" % ("s\u00ed" if self.en_pausa() else "no"),
             "madrugada: %s" % ("sin sonido" if self.cfg().get("noche", True) else "suena"),
         ]
@@ -1114,6 +1241,16 @@ class Vigilante(object):
             items[marca] = ahora().strftime("%Y-%m-%d")
             frescos.append(it)
 
+        # La primera vez que entro ADENTRO de las actividades de un ramo
+        # aparece de golpe todo lo viejo. Eso no es novedad: lo anoto callado.
+        primera_honda = not ficha.get("honda")
+        ficha["honda"] = True
+
+        # Ultimo seguro: si la pagina cambio y no supe decir en que, aviso igual.
+        firma = g.get("firma") or ""
+        cambio_ciego = bool(firma and ficha.get("firma") and firma != ficha["firma"])
+        ficha["firma"] = firma
+
         if nuevo_ramo and not self.estado.get("arrancado"):
             return                      # la primera vez no grita nada
         if nuevo_ramo:
@@ -1121,8 +1258,44 @@ class Vigilante(object):
                      "que suban ac\u00e1." % (f["emoji"], N.escapar(g["nombre"])),
                      silencioso=self.en_silencio())
             return                      # su material inicial no es novedad
+
+        tope = getattr(CFG, "TOPE_PRIMERA_TANDA", 10)
+        if frescos and primera_honda and len(frescos) > tope:
+            log("[i] primera mirada honda en %s: %d cosas viejas anotadas"
+                % (self.nombre_de(clave), len(frescos)))
+            N.enviar("%s <b>%s</b>\nAhora tambi\u00e9n miro <i>adentro</i> de cada "
+                     "actividad. Encontr\u00e9 %d cosas que ya estaban: no te las "
+                     "mando, quedan anotadas. De ac\u00e1 en m\u00e1s te aviso solo "
+                     "de lo nuevo." % (f["emoji"], N.escapar(g["nombre"]), len(frescos)),
+                     silencioso=True)
+            return
+
         if frescos:
             self._avisar(clave, frescos)
+        elif cambio_ciego:
+            self._cambio_sin_nombre(clave, ficha)
+
+    def _cambio_sin_nombre(self, clave, ficha):
+        """La pagina del ramo cambio pero no pude decir en que. Antes esto
+        pasaba callado y era justo el caso que se me escapaba. Ahora avisa,
+        con freno para no repetir."""
+        if not getattr(CFG, "AVISAR_CAMBIO_CIEGO", True):
+            return
+        if self.callado(clave):
+            return
+        horas = getattr(CFG, "HORAS_ENTRE_AVISOS_CIEGOS", 6)
+        ultimo = leer_fecha(ficha.get("aviso_ciego", ""))
+        hoy = ahora()
+        if ultimo and (hoy - ultimo).total_seconds() < horas * 3600:
+            return
+        ficha["aviso_ciego"] = hoy.strftime("%Y-%m-%d %H:%M")
+        N.enviar("%s <b>%s</b>\nCambi\u00f3 algo en la p\u00e1gina del ramo y no "
+                 "pude decirte qu\u00e9. Puede ser un texto editado o algo que la "
+                 "plataforma no me deja ver.\n%s"
+                 % (ficha.get("emoji", "\U0001F4D8"),
+                    N.escapar(ficha.get("nombre", "un ramo")),
+                    N.enlace("abrir el ramo", ficha.get("url", ""))),
+                 silencioso=True)
 
     def _anotar_falla(self, clave, motivo):
         """Tres revisiones seguidas antes de alarmar. Las plataformas se
@@ -1306,16 +1479,11 @@ class Vigilante(object):
             else:
                 hitos = perfil
 
-            # Los hitos que ya pasaron se dan todos por avisados de una vez
-            # y sale UN solo aviso.  Antes, una tarea que nacia faltando dos
-            # minutos disparaba 72h, despues 24h y despues 3h, uno por vuelta,
-            # como si fueran tres recordatorios distintos.
-            hechos = avisos.setdefault(idt, [])
-            vencidos = [h for h in hitos if faltan <= h and str(h) not in hechos]
-            if vencidos:
-                for h in vencidos:
-                    hechos.append(str(h))
-                self._avisar_plazo(idt, t, f, faltan)
+            for h in hitos:
+                if faltan <= h and str(h) not in avisos.setdefault(idt, []):
+                    avisos[idt].append(str(h))
+                    self._avisar_plazo(idt, t, f, faltan)
+                    break
 
     def _avisar_plazo(self, idt, t, f, faltan):
         if faltan <= 0:
@@ -1435,10 +1603,26 @@ class Vigilante(object):
                          % almacen.id_actual())
             self.guardar()
 
+    def olvidar_recordatorios_viejos(self):
+        """Un recordatorio tuyo que ya paso hace rato se archiva solo.  Si no,
+        te queda en Pendientes para siempre y ensucia la lista."""
+        horas = getattr(CFG, "HORAS_PARA_OLVIDAR_MIO", 12)
+        hoy = ahora()
+        for idt, t in list(self.estado.get("tareas", {}).items()):
+            if not t.get("mio") or t.get("hecho") or not t.get("vence"):
+                continue
+            f = leer_fecha(t["vence"])
+            if not f:
+                continue
+            if (hoy - f).total_seconds() / 3600.0 >= horas:
+                t["hecho"] = True
+                self.redibujar_tarjeta(idt)
+
     def una_vuelta(self):
         self.revisar_todo()
         self.procesar_agenda()
         self.avisos_de_plazo()
+        self.olvidar_recordatorios_viejos()
         self.recordar_sin_ver()
         self.resumen_periodico()
         self.latido()
@@ -1449,18 +1633,31 @@ class Vigilante(object):
     def correr(self):
         despierto = en_ventana(ahora())
         fin = time.time() + cuanto_vivir(ahora())
-        log("[i] turno %s, hasta las %s"
+        log("[i] turno %s, hasta las %s (se relanza solo)"
             % ("despierto" if despierto else "dormido",
-               dt.datetime.fromtimestamp(fin).strftime("%H:%M")))
+               (ahora() + dt.timedelta(seconds=fin - time.time())).strftime("%H:%M")))
         self.arranque()
         proxima_revision = 0
         while time.time() < fin:
-            if time.time() >= proxima_revision or self.estado.pop("_revisar_ya", False):
+            # OJO: el pop va PRIMERO y siempre. Adentro de un "or" no corria
+            # cuando la otra condicion ya era verdadera, y /revisar quedaba mudo.
+            forzado = bool(self.estado.pop("_revisar_ya", False))
+            if forzado or time.time() >= proxima_revision:
                 proxima_revision = time.time() + CFG.SEGUNDOS_ENTRE_REVISIONES
+                antes = len(self.estado.get("novedades", []))
                 try:
                     self.una_vuelta()
                 except Exception as e:
                     log("[!] la vuelta fall\u00f3:", type(e).__name__, e)
+                    if forzado:
+                        N.enviar("\u26A0\uFE0F No pude mirar (%s). Lo reintento solo."
+                                 % type(e).__name__)
+                else:
+                    if forzado:
+                        nuevas = len(self.estado.get("novedades", [])) - antes
+                        N.enviar("\U0001F440 Mir\u00e9 las dos plataformas: %s"
+                                 % ("%d cosas nuevas" % nuevas if nuevas > 0
+                                    else "nada nuevo por ahora."), silencioso=True)
             # se queda escuchando el chat: por eso los botones contestan al toque
             self.escuchar(CFG.ESPERA_CHAT)
         self.guardar()
