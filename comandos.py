@@ -61,39 +61,117 @@ def _hora_valida(t):
     return bool(re.fullmatch(r"([01]?\d|2[0-3]):[0-5]\d", t or ""))
 
 
+def _horas_lindas(h):
+    """0.5 -> '30 minutos', 24 -> '1 dia', 168 -> '7 dias'."""
+    h = float(h)
+    if h < 1:
+        return "%d minutos" % int(round(h * 60))
+    if h < 24:
+        return "%d hora%s" % (int(h), "" if int(h) == 1 else "s")
+    dias = int(round(h / 24.0))
+    return "%d d\u00eda%s" % (dias, "" if dias == 1 else "s")
+
+
+def explicar_perfil(nombre):
+    """En una linea, cada cuanto avisa ese perfil.  Se arma leyendo la
+    configuracion de verdad, asi que nunca puede mentir."""
+    perfil = CFG.PERFILES.get(pelado(nombre))
+    if perfil is None:
+        return ""
+    if perfil == "diario":
+        return "avisa una vez por d\u00eda hasta la entrega"
+    partes = [_horas_lindas(h) for h in perfil]
+    return "avisa " + ", ".join(partes) + " antes de la entrega"
+
+
+def texto_perfiles():
+    """La pantalla que explica los perfiles."""
+    porde = getattr(CFG, "PERFIL_POR_DEFECTO", "normal")
+    lineas = ["\u2699 <b>Perfiles de insistencia</b>",
+              "Es cada cu\u00e1nto te recuerdo una entrega que todav\u00eda no "
+              "marcaste como hecha. No cambia los avisos de material nuevo: "
+              "eso llega siempre, apenas aparece.", ""]
+    for nombre in ("suave", "normal", "apretado", "diario"):
+        if nombre not in CFG.PERFILES:
+            continue
+        marca = " \u00b7 el que viene puesto" if nombre == porde else ""
+        lineas.append("<b>%s</b>%s" % (nombre, marca))
+        lineas.append(explicar_perfil(nombre))
+        lineas.append("")
+    lineas += [
+        "Cada ramo puede tener el suyo.",
+        "/perfil apretado calculo \u00b7 solo ese ramo",
+        "/perfil suave \u00b7 todos los ramos",
+        "",
+        "Tus recordatorios propios no usan perfil: suenan una sola vez, a la "
+        "hora que pediste.",
+    ]
+    return "\n".join(lineas)
+
+
 def texto_ayuda():
-    lineas = ["<b>Comandos</b>", ""]
+    # OJO: los comandos van en texto pelado, sin <code>.  Telegram convierte
+    # en boton cualquier /palabra suelta, pero adentro de <code> queda como
+    # texto muerto que solo se puede copiar.
+    lineas = ["<b>Comandos</b>", "Toc\u00e1 cualquiera para usarlo.", ""]
     for c, d in MENU:
         cola = COLA.get(c)
-        firma = "/%s %s" % (c, cola) if cola else "/" + c
-        lineas.append("<code>%s</code> \u00b7 %s" % (firma, d))
+        if cola:
+            lineas.append("/%s <i>%s</i> \u00b7 %s" % (c, N.escapar(cola), d))
+        else:
+            lineas.append("/%s \u00b7 %s" % (c, d))
     lineas += [
         "",
-        "<b>/resumen</b>",
-        "<code>/resumen ramo calculo</code> \u00b7 ese ramo, con IA",
-        "<code>/resumen</code> \u00b7 prende o apaga el semanal",
-        "<code>/resumen viernes 20:00</code> \u00b7 cambia cu\u00e1ndo llega",
-        "<code>/resumen diario 21:00</code> \u00b7 todos los d\u00edas",
+        "<b>Res\u00famenes</b>",
+        "/resumen <i>ramo calculo</i> \u00b7 ese ramo, con IA",
+        "/resumen \u00b7 prende o apaga el semanal",
+        "/resumen <i>viernes 20:00</i> \u00b7 cambia cu\u00e1ndo llega",
+        "/resumen <i>diario 21:00</i> \u00b7 todos los d\u00edas",
         "",
-        "<b>Perfiles</b> \u00b7 suave, normal, apretado, diario",
-        "<code>/perfil apretado termo</code> \u00b7 uno por ramo",
+        "<b>Perfiles</b>",
+    ]
+    for nombre in ("suave", "normal", "apretado", "diario"):
+        if nombre in CFG.PERFILES:
+            lineas.append("<b>%s</b> \u00b7 %s" % (nombre, explicar_perfil(nombre)))
+    lineas += [
+        "/perfil <i>apretado termo</i> \u00b7 uno por ramo",
+        "",
+        "<b>Sin comandos</b>",
+        "Escribime normal y hago lo que pidas: \u00abrecordame el jueves a las "
+        "18 estudiar termo\u00bb. Antes de tocar nada te muestro una "
+        "confirmaci\u00f3n armada por el programa, no por la IA.",
     ]
     return "\n".join(lineas)
 
 
 # ---------------------------------------------------------------- fechas
+RELLENO = ("en", "el", "la", "este", "esta", "al", "a", "proximo", "dentro", "de")
+
+
 def cuando(texto, ahora):
-    """Entiende 'viernes 18:00', 'manana 20:00', '3h', '2d' y 'HH:MM'.
+    """Entiende 'viernes 18:00', 'manana 20:00', '3h', '20m', '2d' y 'HH:MM'.
     Devuelve (fecha, resto) o (None, texto)."""
     p = texto.split()
+    # "en 5 minutos", "el viernes", "este lunes": las muletillas no molestan
+    while p and pelado(p[0]) in RELLENO:
+        p = p[1:]
     if not p:
         return None, texto
     uno = pelado(p[0])
 
-    m = re.fullmatch(r"(\d+)([hd])", uno)
+    # 20m, 3h, 2d, y tambien "5 minutos" o "2 horas" separados
+    m = re.fullmatch(r"(\d+)(m|min|mins|minutos?|h|hs|horas?|d|dias?)", uno)
+    if not m and uno.isdigit() and len(p) > 1:
+        unido = uno + pelado(p[1])
+        m = re.fullmatch(r"(\d+)(m|min|mins|minutos?|h|hs|horas?|d|dias?)", unido)
+        if m:
+            p = [unido] + p[2:]
     if m:
         n = int(m.group(1))
-        salto = dt.timedelta(hours=n) if m.group(2) == "h" else dt.timedelta(days=n)
+        letra = m.group(2)[0]
+        salto = (dt.timedelta(minutes=n) if letra == "m"
+                 else dt.timedelta(hours=n) if letra == "h"
+                 else dt.timedelta(days=n))
         return ahora + salto, " ".join(p[1:])
 
     resto = p[1:]
@@ -102,7 +180,17 @@ def cuando(texto, ahora):
     elif uno in ("manana", "mnana"):
         base = ahora + dt.timedelta(days=1)
     elif uno in DIAS:
-        falta = (DIAS.index(uno) - ahora.weekday()) % 7 or 7
+        falta = (DIAS.index(uno) - ahora.weekday()) % 7
+        # Si nombras el dia de hoy y la hora todavia no paso, es HOY.  Antes
+        # se iba siempre a la semana que viene.
+        if falta == 0:
+            hoy_sirve = False
+            if resto and _hora_valida(resto[0]):
+                h, mi = [int(x) for x in resto[0].split(":")]
+                hoy_sirve = ahora.replace(hour=h, minute=mi, second=0,
+                                          microsecond=0) > ahora
+            if not hoy_sirve:
+                falta = 7
         base = ahora + dt.timedelta(days=falta)
     elif _hora_valida(uno):
         h, mi = [int(x) for x in uno.split(":")]
@@ -357,6 +445,16 @@ def atender(estado, acc, ahora, espera=0):
                 acc["accion"](dato[2:])
                 continue
 
+            # la confirmacion de una orden hablada
+            if dato in ("prop:si", "prop:no"):
+                N.avisar_boton(cb.get("id"), "Dale" if dato == "prop:si" else "Listo")
+                salida = acc["confirmar_propuesta"](dato == "prop:si")
+                if mensaje_id:
+                    N.editar(mensaje_id, salida or "Listo.")
+                elif salida:
+                    N.enviar(salida)
+                continue
+
             aviso, donde = P.toque(estado, dato, acc, ahora)
             N.avisar_boton(cb.get("id"), aviso)
             acc["dibujar_panel"](donde, mensaje_id)
@@ -408,8 +506,30 @@ def atender(estado, acc, ahora, espera=0):
 
         # Cualquier cosa que escribas y no sea un comando es una pregunta
         # para la IA sobre tus propias cosas.
+        # Elegiste la hora con un boton y ahora mandas el texto: se anota al
+        # toque, sin IA y sin parseo.
+        if not texto.startswith("/") and estado.get("esperando_rec"):
+            fecha = estado.pop("esperando_rec", None)
+            try:
+                f = dt.datetime.strptime(fecha, "%Y-%m-%d %H:%M")
+            except Exception:
+                f = None
+            if f:
+                idt = "mio_%d" % int(f.timestamp())
+                estado.setdefault("tareas", {})[idt] = {
+                    "grupo": "", "clave": "", "titulo": texto.strip()[:200], "url": "",
+                    "vence": f.strftime("%Y-%m-%d %H:%M"), "hecho": False,
+                    "nota": "", "mio": True}
+                borrar_ya(estado, m.get("message_id"))
+                acc["dibujar_panel"]("p:rec", None)
+                continue
+
         if not texto.startswith("/"):
-            if acc.get("preguntar"):
+            if acc.get("proponer"):
+                # Puede ser una orden ("recordame a las 8") o una pregunta.
+                # Si es orden, el programa te pide confirmacion antes de nada.
+                acc["proponer"](texto)
+            elif acc.get("preguntar"):
                 acc["preguntar"](texto)
             else:
                 efimero(estado, "Toc\u00e1 \U0001F431 Panel, o prob\u00e1 /ayuda")
@@ -422,7 +542,8 @@ def atender(estado, acc, ahora, espera=0):
         resto = partes[1].strip() if len(partes) > 1 else ""
         r = None
 
-        info = cmd in ("ayuda", "help", "ultimo", "pendientes", "semana", "estado")
+        info = cmd in ("ayuda", "help", "ultimo", "pendientes", "semana", "estado",
+                       "perfil", "perfiles", "version", "actualizacion")
 
         if cmd in ("start", "panel", "menu"):
             acc["abrir_panel"](saludar=(cmd == "start"))
@@ -472,17 +593,24 @@ def atender(estado, acc, ahora, espera=0):
                  else "Ahora sueno a cualquier hora.")
         elif cmd == "estado":
             r = acc["texto_diagnostico"]()
+        elif cmd in ("perfiles", "perfilar"):
+            r = texto_perfiles()
         elif cmd == "perfil":
-            r = _perfil(estado, resto, acc)
+            r = texto_perfiles() if not resto.strip() else _perfil(estado, resto, acc)
         elif cmd in ("callar", "silenciar"):
             r = _callar(estado, resto, acc, ahora)
         elif cmd == "revisar":
             estado["_revisar_ya"] = True
             r = "Voy a mirar ahora."
-        elif cmd == "recordar":
-            r = _recordar(estado, resto, ahora)
+        elif cmd in ("recordar", "recordatorios", "recordatorio"):
+            if not resto.strip():
+                acc["dibujar_panel"]("p:rec", None)
+            else:
+                r = _recordar(estado, resto, ahora)
         elif cmd == "ia":
             r = _ia(estado, resto)
+        elif cmd in ("version", "actualizacion"):
+            r = acc["texto_version"]()
         elif cmd == "exportar":
             acc["accion"]("exportar")
         elif cmd == "ramos":
