@@ -897,6 +897,26 @@ class Vigilante(object):
                             ", %d cosas nuevas" % nuevas if nuevas else ", sin novedad"))
         return prefijo + "\U0001F515 <b>SILENCIADOS</b>\n" + "\n".join(filas)
 
+    def por_que_no_hay_ia(self):
+        """Una linea corta que dice por que la IA no esta trabajando.
+
+        Sirve sobre todo cuando el bot corre lejos: ahi no ves la consola,
+        asi que el motivo tiene que llegar al chat."""
+        crudo = os.environ.get("IA_KEY", "")
+        if not crudo.strip():
+            return "no hay clave cargada (falta el secreto IA_KEY)"
+        if crudo != crudo.strip() or crudo.strip()[0] in "'\"":
+            return "la clave tiene comillas o espacios de mas"
+        if not self.cfg().get("ia", True):
+            return "la apagaste vos con /ia"
+        fallas = self.estado.get("fallas_ia", 0)
+        ultimo = self.estado.get("ultimo_error_ia", "")
+        if fallas >= CFG.IA["fallas_para_apagar"]:
+            return "se apago sola tras %d intentos. %s" % (fallas, ultimo or "")
+        if ultimo:
+            return "%s (van %d)" % (ultimo, fallas)
+        return ""
+
     def texto_diagnostico(self):
         d = self.tablero()
         lineas = [
@@ -905,6 +925,12 @@ class Vigilante(object):
             "ramos: %d \u00b7 pendientes: %d" % (d["ramos"], d["pendientes"]),
             "memoria: %s" % d["memoria"],
             "IA: %s" % d["ia"],
+            "",
+        ]
+        motivo = self.por_que_no_hay_ia()
+        if motivo:
+            lineas.append("\u26A0\uFE0F IA: %s" % motivo)
+        lineas += [
             "pausa: %s" % ("s\u00ed" if self.en_pausa() else "no"),
             "madrugada: %s" % ("sin sonido" if self.cfg().get("noche", True) else "suena"),
         ]
@@ -1280,11 +1306,16 @@ class Vigilante(object):
             else:
                 hitos = perfil
 
-            for h in hitos:
-                if faltan <= h and str(h) not in avisos.setdefault(idt, []):
-                    avisos[idt].append(str(h))
-                    self._avisar_plazo(idt, t, f, faltan)
-                    break
+            # Los hitos que ya pasaron se dan todos por avisados de una vez
+            # y sale UN solo aviso.  Antes, una tarea que nacia faltando dos
+            # minutos disparaba 72h, despues 24h y despues 3h, uno por vuelta,
+            # como si fueran tres recordatorios distintos.
+            hechos = avisos.setdefault(idt, [])
+            vencidos = [h for h in hitos if faltan <= h and str(h) not in hechos]
+            if vencidos:
+                for h in vencidos:
+                    hechos.append(str(h))
+                self._avisar_plazo(idt, t, f, faltan)
 
     def _avisar_plazo(self, idt, t, f, faltan):
         if faltan <= 0:
