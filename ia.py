@@ -96,7 +96,17 @@ def _recortar(texto, limite):
 
 
 def _clave():
-    return os.environ.get("IA_KEY", "").strip()
+    """La clave, limpia.
+
+    Al pegarla en un secreto es facil que se cuelen comillas, espacios o un
+    salto de linea invisible.  Eso hace que la web conteste 400 y parezca
+    que la clave esta mal cuando en realidad esta bien."""
+    crudo = os.environ.get("IA_KEY", "")
+    crudo = crudo.replace("\r", " ").replace("\n", " ").strip()
+    crudo = crudo.strip("'\"").strip()
+    if crudo.lower().startswith("ia_key="):
+        crudo = crudo[7:].strip()
+    return crudo
 
 
 def disponible(estado=None):
