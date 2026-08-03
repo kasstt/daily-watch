@@ -90,9 +90,15 @@ def _ramo(estado, acc, clave):
         texto += "\n\n\U0001F515 silenciado, quedan %d d\u00edas" % _dias_de_callado(
             ficha_callado, acc["hoy"]())
 
+    cuantos = acc["cuantos_archivos"](clave) if "cuantos_archivos" in acc else 0
+    if cuantos:
+        texto += "\n\U0001F4C4 %d documento%s guardado%s" % (
+            cuantos, "" if cuantos == 1 else "s", "" if cuantos == 1 else "s")
+
     botones = N.teclado([
         [("\U0001F4C4 Ver material", "p:mat:" + clave)],
-        [("\U0001F9E0 Resumen del ramo", "a:resu:" + clave)],
+        [("\U0001F4E5 Mandame los archivos", "a:bajar:" + clave)],
+        [("\U0001F9E0 Resumen con IA", "a:resu:" + clave)],
         [("\U0001F514 Perfil: %s" % _perfil_de(estado, clave), "t:perfil:" + clave)],
         [("\U0001F514 Volver a avisar" if ficha_callado else "\U0001F515 Silenciar",
           "t:callar:" + clave)],
@@ -177,8 +183,12 @@ def pantalla(estado, donde, acc):
             return _ramo(estado, acc, donde[4:])
         if donde.startswith("p:mat:"):
             clave = donde[6:]
-            return _simple("\U0001F4C4 <b>Material</b>", acc["material"](clave),
-                           "p:r:" + clave)
+            filas = []
+            if acc["cuantos_archivos"](clave):
+                filas.append([("\U0001F4E5 M\u00e1ndame los archivos", "a:bajar:" + clave)])
+            filas.append([("\u2B05\uFE0F Volver", "p:r:" + clave)])
+            return ("\U0001F4C4 <b>Todo el material</b>\n\n" + acc["material"](clave),
+                    N.teclado(filas))
         if donde == "p:avisos":
             return _avisos(estado, acc)
         if donde == "p:dia":
