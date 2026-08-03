@@ -8,19 +8,15 @@
    "72",
    "24",
    "3"
-  ]
+  ],
+  "mio_1786360440": [],
+  "mio_1786360680": []
  },
  "basura": [],
- "callados": {
-  "": {
-   "cuenta": 0,
-   "hasta": "2026-08-17"
-  }
- },
+ "callados": {},
  "config": {
   "ia": true,
-  "noche": true,
-  "pausa_hasta": "2026-08-03 10:21",
+  "noche": false,
   "resumen": {
    "activo": true,
    "cada": "semana",
@@ -34,25 +30,28 @@
  "fallas_ia": 0,
  "grupos": {
   "45def8adfd92342e": {
+   "aviso_ciego": "2026-08-03 18:03",
    "cantidad": 0,
    "emoji": "📘",
+   "firma": "eb26dbc72388e2d4",
    "fuente": "A",
+   "honda": true,
    "id": "97852",
    "nombre": "CÁLCULO INTEGRAL",
    "url": "https://adecca.ubiobio.cl/curso/97852",
-   "visto": "2026-08-03 07:36"
+   "visto": "2026-08-03 18:25"
   }
  },
  "items": {},
  "novedades": [],
- "panel_donde": "p:avisos",
- "panel_id": 215,
+ "panel_donde": "p:r:45def8adfd92342e",
+ "panel_id": 286,
  "pendientes_ia": {},
  "perfiles": {},
  "tareas": {
   "mio_1785759296": {
    "clave": "",
-   "dormida_hasta": "2026-08-03 10:29",
+   "dormida_hasta": "2026-08-03 10:51",
    "grupo": "",
    "hecho": false,
    "mio": true,
@@ -83,11 +82,11 @@
    "vence": "2026-08-10 07:18"
   }
  },
- "tg_offset": 791138650,
- "ultima_corrida": "03/08 07:37",
+ "tg_offset": 791138711,
+ "ultima_corrida": "03/08 18:25",
  "ultimo_error_ia": "la clave no sirve o no tiene permiso. Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.googl",
- "ultimo_info": 229,
- "ultimo_latido": "",
+ "ultimo_info": 270,
+ "ultimo_latido": "2026-08-03",
  "ultimo_resumen": "",
  "version": 2
 }
