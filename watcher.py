@@ -31,6 +31,7 @@ except Exception:
 import almacen
 import comandos
 import fuentes as CFG
+import version as VER
 import ia as IA
 import notificar as N
 import panel as P
@@ -375,6 +376,60 @@ def fecha_en_texto(texto, hoy):
 _ULTIMO_PROFUNDO = {}
 
 
+# Hay plataformas que ni siquiera escriben los enlaces: dejan la lista del
+# material en una variable de JavaScript y el navegador arma el arbol solo.
+# Sin esto, el bot ve la pagina del ramo vacia aunque este llena.
+RE_ARBOL_JS = re.compile(
+    r"""var\s+arbol\s*=\s*JSON\.parse\(\s*(['"])(.*?)\1\s*\)""", re.S)
+
+
+def _texto_js(crudo):
+    """Deshace los escapes de una cadena escrita adentro de JavaScript."""
+    try:
+        return json.loads('"' + crudo.replace('"', '\\"') + '"')
+    except Exception:
+        return (crudo.replace("\\'", "'").replace('\\"', '"')
+                     .replace("\\/", "/").replace("\\\\", "\\"))
+
+
+def _aplanar_arbol(nodos, salida):
+    if isinstance(nodos, dict):
+        nodos = [nodos]
+    if not isinstance(nodos, list):
+        return
+    for n in nodos:
+        if not isinstance(n, dict):
+            continue
+        idn = str(n.get("id") or n.get("ID") or "").strip()
+        nombre = limpio(str(n.get("name") or n.get("nombre") or ""))
+        if idn and idn != "-1" and nombre:
+            salida.append((idn, nombre, str(n.get("type") or "")))
+        for hijos in ("children", "items", "hijos", "nodes", "data"):
+            if n.get(hijos):
+                _aplanar_arbol(n[hijos], salida)
+
+
+def arbol_escondido(html, base, id_ramo):
+    """Saca el material que la pagina guarda en JavaScript en vez de enlazarlo."""
+    salida = []
+    m = RE_ARBOL_JS.search(html or "")
+    if not m:
+        return salida
+    try:
+        datos = json.loads(_texto_js(m.group(2)) or "[]")
+    except Exception:
+        return salida
+    planos = []
+    _aplanar_arbol(datos, planos)
+    for idn, nombre, clase in planos:
+        if str(clase).lower() in ("folder", "branch", "carpeta"):
+            continue                       # una carpeta no es material
+        url = "%s/curso/%s/modulo/%s" % (base.rstrip("/"), id_ramo, idn)
+        salida.append({"titulo": nombre[:180], "url": url,
+                       "tipo": tipo_de(url, nombre), "descripcion": ""})
+    return salida
+
+
 def _toca_profundo(id_ramo, firma_raiz):
     """Entrar adentro de cada actividad en cada vuelta seria maltratar la
     plataforma.  Entro cuando la portada cambio, y cada tanto igual."""
@@ -410,12 +465,20 @@ def explorar_ramo(s, base, g):
     items = {}
     for it in cosas_de_la_pagina(html, base, propia=raiz):
         items.setdefault(it["url"], it)
+    # el material que vive en el JavaScript de la pagina
+    escondido = arbol_escondido(html, base, g.get("id"))
+    for it in escondido:
+        items.setdefault(it["url"], it)
+    if escondido:
+        firmas.append(huella("arbol", *sorted(x["url"] + x["titulo"] for x in escondido)))
 
     if hondo <= 0 or not _toca_profundo(str(g.get("id")), firmas[0]):
         return list(items.values()), huella("firma", *firmas)
 
     vistas = {raiz}
-    cola = [(it["url"], 1) for it in items.values()
+    # las secciones del JavaScript se miran siempre primero: ahi esta lo bueno
+    cola = [(it["url"], 1) for it in escondido]
+    cola += [(it["url"], 1) for it in items.values()
             if _es_del_ramo(it["url"], base, g.get("id"))
             and not es_bajable(it["url"], it["titulo"])]
     while cola and len(vistas) < tope:
@@ -1585,8 +1648,42 @@ class Vigilante(object):
     # =================================================================
     #  la corrida
     # =================================================================
+    def avisar_version(self):
+        """Si el codigo que esta corriendo no es el mismo de la ultima vez,
+        te aviso que el parche entro y que trae.  Este mensaje NO se borra:
+        queda como comprobante y como lista de que probar."""
+        try:
+            actual = str(VER.VERSION)
+        except Exception:
+            return
+        if self.estado.get("version_avisada") == actual:
+            return
+        primera = not self.estado.get("version_avisada")
+        self.estado["version_avisada"] = actual
+        self.guardar()
+        if primera and self.estado.get("arrancado"):
+            return               # no grito por una version que ya venia puesta
+        lineas = ["\U0001F195 <b>Actualizaci\u00f3n aplicada: v%s</b>" % actual]
+        if getattr(VER, "TITULO", ""):
+            lineas.append("<i>%s</i>" % N.escapar(VER.TITULO))
+        lineas.append("")
+        lineas.append("<b>Qu\u00e9 cambi\u00f3</b>")
+        for c in getattr(VER, "CAMBIOS", [])[:12]:
+            lineas.append("\u2022 " + N.escapar(c))
+        pruebas = getattr(VER, "A_PROBAR", [])
+        if pruebas:
+            lineas.append("")
+            lineas.append("<b>Para probar</b>")
+            for i, p in enumerate(pruebas[:6], 1):
+                lineas.append("%d. %s" % (i, N.escapar(p)))
+        lineas.append("")
+        lineas.append("Si algo de esto no funciona, avisame y lo corrijo.")
+        N.enviar("\n".join(lineas))
+        log("[i] avise la version %s" % actual)
+
     def arranque(self):
         N.publicar_menu(comandos.MENU)
+        self.avisar_version()
         if not self.estado.get("arrancado"):
             self.revisar_todo()
             self.procesar_agenda()
