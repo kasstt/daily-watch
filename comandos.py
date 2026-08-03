@@ -68,34 +68,47 @@ def texto_ayuda():
     for c, d in MENU:
         cola = COLA.get(c)
         firma = "/%s %s" % (c, cola) if cola else "/" + c
-        lineas.append("<code>%s</code> \u00b7 %s" % (firma, d))
+        # Sin <code>: asi Telegram los deja apretables.
+        lineas.append("%s \u00b7 %s" % (firma, d))
     lineas += [
         "",
         "<b>/resumen</b>",
-        "<code>/resumen ramo calculo</code> \u00b7 ese ramo, con IA",
-        "<code>/resumen</code> \u00b7 prende o apaga el semanal",
-        "<code>/resumen viernes 20:00</code> \u00b7 cambia cu\u00e1ndo llega",
-        "<code>/resumen diario 21:00</code> \u00b7 todos los d\u00edas",
+        "/resumen ramo calculo \u00b7 ese ramo, con IA",
+        "/resumen \u00b7 prende o apaga el semanal",
+        "/resumen viernes 20:00 \u00b7 cambia cu\u00e1ndo llega",
+        "/resumen diario 21:00 \u00b7 todos los d\u00edas",
+        "",
+        "<b>Recordatorios</b>",
+        "/recordar 20m sacar la ropa \u00b7 en minutos",
+        "/recordar 3h mandar el informe \u00b7 en horas",
+        "/recordar viernes 18:00 estudiar \u00b7 dia y hora",
         "",
         "<b>Perfiles</b> \u00b7 suave, normal, apretado, diario",
-        "<code>/perfil apretado termo</code> \u00b7 uno por ramo",
+        "/perfil apretado termo \u00b7 uno por ramo",
     ]
     return "\n".join(lineas)
 
 
 # ---------------------------------------------------------------- fechas
 def cuando(texto, ahora):
-    """Entiende 'viernes 18:00', 'manana 20:00', '3h', '2d' y 'HH:MM'.
+    """Entiende 'viernes 18:00', 'manana 20:00', '2m', '3h', '2d' y 'HH:MM'.
     Devuelve (fecha, resto) o (None, texto)."""
     p = texto.split()
     if not p:
         return None, texto
     uno = pelado(p[0])
 
-    m = re.fullmatch(r"(\d+)([hd])", uno)
+    # '2m' minutos, '3h' horas, '2d' dias.  Tambien 'min', 'hs', 'dias'.
+    m = re.fullmatch(r"(\d+)\s*(m|min|mins|minutos?|h|hs|horas?|d|dias?)", uno)
     if m:
         n = int(m.group(1))
-        salto = dt.timedelta(hours=n) if m.group(2) == "h" else dt.timedelta(days=n)
+        letra = m.group(2)[0]
+        if letra == "m":
+            salto = dt.timedelta(minutes=n)
+        elif letra == "h":
+            salto = dt.timedelta(hours=n)
+        else:
+            salto = dt.timedelta(days=n)
         return ahora + salto, " ".join(p[1:])
 
     resto = p[1:]
@@ -215,8 +228,8 @@ def _callar(estado, resto, acc, ahora):
 def _recordar(estado, resto, ahora):
     fecha, texto = cuando(resto, ahora)
     if not fecha:
-        return ("Decime cu\u00e1ndo. Por ejemplo:\n/recordar viernes 18:00 estudiar\n"
-                "/recordar 3h mandar el informe")
+        return ("Decime cu\u00e1ndo. Por ejemplo:\n/recordar 20m sacar la ropa\n"
+                "/recordar 3h mandar el informe\n/recordar viernes 18:00 estudiar")
     if not texto.strip():
         return "Y qu\u00e9 te recuerdo?"
     idt = "mio_%d" % int(fecha.timestamp())
