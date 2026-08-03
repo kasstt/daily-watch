@@ -1005,6 +1005,224 @@ class Vigilante(object):
                % (N.escapar(pregunta[:80]), N.cita(N.escapar(respuesta))),
                N.teclado([[("\U0001F431 Panel", "p:raiz")]]))
 
+    # ------------------------------------------------ ordenes habladas
+    def _contexto_orden(self):
+        """Lo minimo que la IA necesita para traducir un pedido."""
+        hoy = ahora()
+        ramos = [v.get("nombre", "?") for v in self.estado.get("grupos", {}).values()]
+        pend = [t.get("titulo", "") for t in self.estado.get("tareas", {}).values()
+                if not t.get("hecho")]
+        return "AHORA: %s\nRAMOS: %s\nPENDIENTES: %s" % (
+            hoy.strftime("%Y-%m-%d %H:%M (%A)"),
+            ", ".join(sorted(ramos)) or "ninguno",
+            " | ".join(pend[:20]) or "ninguno")
+
+    def _en_cuanto(self, f):
+        """Cuanto falta, calculado por el programa y no por la IA."""
+        seg = (f - ahora()).total_seconds()
+        if seg < 90:
+            return "en un ratito"
+        if seg < 5400:
+            return "en %d minutos" % int(seg / 60)
+        if seg < 172800:
+            return "en %d horas" % int(seg / 3600)
+        return "en %d d\u00edas" % int(seg / 86400)
+
+    def validar_orden(self, orden):
+        """El programa revisa lo que entendio la IA y arma la confirmacion.
+
+        Devuelve (plan, texto).  Si el plan es None, el texto explica por que
+        no se puede hacer.  Aca no se ejecuta nada todavia."""
+        que = str((orden or {}).get("accion", "")).strip().lower()
+        pie = "\n<i>Estos datos los resolv\u00ed yo, no la IA.</i>"
+
+        if que == "recordar":
+            f = leer_fecha(str(orden.get("cuando", "")))
+            texto = str(orden.get("que", "")).strip()[:200]
+            if not f:
+                return None, "Entend\u00ed un recordatorio pero no la fecha. Decime la hora."
+            if not texto:
+                return None, "Y qu\u00e9 te recuerdo?"
+            if (f - ahora()).total_seconds() < 30:
+                return None, "Esa hora ya pas\u00f3. Decime una futura."
+            if (f - ahora()).days > 365:
+                return None, "Eso est\u00e1 demasiado lejos, no lo anoto."
+            plan = {"accion": "recordar", "cuando": f.strftime("%Y-%m-%d %H:%M"),
+                    "que": texto}
+            return plan, ("\U0001F916 <b>Confirmame esto</b>\n"
+                          "\u23F0 Recordatorio: %s\n"
+                          "Cu\u00e1ndo: %s a las %s (%s)\n"
+                          "Suena una sola vez.%s"
+                          % (N.escapar(texto), f.strftime("%d/%m"),
+                             f.strftime("%H:%M"), self._en_cuanto(f), pie))
+
+        if que == "pausa":
+            try:
+                horas = float(orden.get("horas", 3))
+            except Exception:
+                horas = 3.0
+            horas = max(0.25, min(horas, 72.0))
+            hasta = ahora() + dt.timedelta(hours=horas)
+            plan = {"accion": "pausa", "horas": horas}
+            return plan, ("\U0001F916 <b>Confirmame esto</b>\n"
+                          "\u23F8 Me callo %s, hasta las %s\n"
+                          "Los plazos que venzan te llegan igual.%s"
+                          % (self._en_cuanto(hasta).replace("en ", "por "),
+                             hasta.strftime("%H:%M"), pie))
+
+        if que == "seguir":
+            return {"accion": "seguir"}, ("\U0001F916 <b>Confirmame esto</b>\n"
+                                          "\u25B6 Vuelvo a avisarte ya mismo.%s" % pie)
+
+        if que in ("callar", "resumen") and str(orden.get("ramo", "")).strip():
+            clave, aviso = self.buscar(str(orden.get("ramo", "")))
+            if not clave:
+                return None, aviso
+            if que == "callar":
+                return ({"accion": "callar", "clave": clave},
+                        "\U0001F916 <b>Confirmame esto</b>\n\U0001F515 Silencio %s "
+                        "por %d d\u00edas\nLas entregas con fecha te llegan igual.%s"
+                        % (N.escapar(aviso), CFG.DIAS_CALLADO, pie))
+            return ({"accion": "resumen", "clave": clave},
+                    "\U0001F916 <b>Confirmame esto</b>\n\U0001F9E0 Resumen de %s%s"
+                    % (N.escapar(aviso), pie))
+
+        if que == "perfil":
+            perfil = pelado(str(orden.get("perfil", "")))
+            if perfil not in CFG.PERFILES:
+                return None, "Los perfiles son: suave, normal, apretado, diario."
+            ramo = str(orden.get("ramo", "")).strip()
+            if ramo:
+                clave, aviso = self.buscar(ramo)
+                if not clave:
+                    return None, aviso
+                plan = {"accion": "perfil", "perfil": perfil, "clave": clave}
+                donde = N.escapar(aviso)
+            else:
+                plan = {"accion": "perfil", "perfil": perfil, "clave": ""}
+                donde = "todos los ramos"
+            return plan, ("\U0001F916 <b>Confirmame esto</b>\n"
+                          "\u2699 Perfil <b>%s</b> para %s\n%s%s"
+                          % (perfil, donde, N.escapar(comandos.explicar_perfil(perfil)), pie))
+
+        if que == "revisar":
+            return {"accion": "revisar"}, ("\U0001F916 <b>Confirmame esto</b>\n"
+                                           "\U0001F50E Miro las dos plataformas ahora.%s" % pie)
+
+        if que == "noche":
+            ahora_noche = self.cfg().get("noche", True)
+            return {"accion": "noche"}, ("\U0001F916 <b>Confirmame esto</b>\n"
+                                         "\U0001F319 Madrugada: paso de <b>%s</b> a <b>%s</b>%s"
+                                         % ("sin sonido" if ahora_noche else "con sonido",
+                                            "con sonido" if ahora_noche else "sin sonido", pie))
+
+        if que == "hecho":
+            pedazo = pelado(str(orden.get("tarea", "")))
+            if not pedazo:
+                return None, "No entend\u00ed cu\u00e1l tarea."
+            hits = [(i, t) for i, t in self.estado.get("tareas", {}).items()
+                    if not t.get("hecho") and pedazo in pelado(t.get("titulo", ""))]
+            if not hits:
+                return None, "No tengo ninguna pendiente que se parezca a eso."
+            if len(hits) > 1:
+                return None, ("Hay varias:\n" + "\n".join(
+                    "\u2022 " + N.escapar(t.get("titulo", "")) for _, t in hits[:6]))
+            idt, t = hits[0]
+            return ({"accion": "hecho", "idt": idt},
+                    "\U0001F916 <b>Confirmame esto</b>\n\u2705 Marco como hecha:\n%s%s"
+                    % (N.escapar(t.get("titulo", "")), pie))
+
+        return None, ""
+
+    def ejecutar_plan(self, plan):
+        """Hace lo que ya confirmaste. Devuelve el texto de cierre."""
+        que = plan.get("accion")
+        if que == "recordar":
+            f = leer_fecha(plan["cuando"])
+            idt = "mio_%d" % int(f.timestamp())
+            self.estado.setdefault("tareas", {})[idt] = {
+                "grupo": "", "clave": "", "titulo": plan["que"], "url": "",
+                "vence": f.strftime("%Y-%m-%d %H:%M"), "hecho": False,
+                "nota": "", "mio": True}
+            return "\u2705 Anotado: <b>%s</b>\nTe aviso el %s a las %s, una sola vez." % (
+                N.escapar(plan["que"]), f.strftime("%d/%m"), f.strftime("%H:%M"))
+        if que == "pausa":
+            hasta = ahora() + dt.timedelta(hours=plan["horas"])
+            self.cfg()["pausa_hasta"] = hasta.strftime("%Y-%m-%d %H:%M")
+            return "\u23F8 Me callo hasta las %s." % hasta.strftime("%H:%M")
+        if que == "seguir":
+            self.cfg()["pausa_hasta"] = None
+            return "\u25B6 Volv\u00ed."
+        if que == "callar":
+            hasta = ahora() + dt.timedelta(days=CFG.DIAS_CALLADO)
+            self.estado.setdefault("callados", {})[plan["clave"]] = {
+                "hasta": hasta.strftime("%Y-%m-%d"), "cuenta": 0}
+            return "\U0001F515 %s callado hasta el %s." % (
+                N.escapar(self.nombre_de(plan["clave"])), hasta.strftime("%d/%m"))
+        if que == "perfil":
+            if plan.get("clave"):
+                self.estado.setdefault("perfiles", {})[plan["clave"]] = plan["perfil"]
+                return "\u2699 %s queda en <b>%s</b>." % (
+                    N.escapar(self.nombre_de(plan["clave"])), plan["perfil"])
+            self.cfg()["perfil"] = plan["perfil"]
+            return "\u2699 Todos los ramos pasan a <b>%s</b>." % plan["perfil"]
+        if que == "revisar":
+            self.estado["_revisar_ya"] = True
+            return "\U0001F50E Voy a mirar ahora."
+        if que == "noche":
+            self.cfg()["noche"] = not self.cfg().get("noche", True)
+            return ("\U0001F319 De madrugada llego sin sonido."
+                    if self.cfg()["noche"] else "\U0001F319 Ahora sueno a cualquier hora.")
+        if que == "resumen":
+            self.resumen_ramo(plan["clave"])
+            return ""
+        if que == "hecho":
+            t = self.estado.get("tareas", {}).get(plan["idt"])
+            if not t:
+                return "Esa ya no la tengo."
+            t["hecho"] = True
+            return "\u2705 Listo: <b>%s</b>." % N.escapar(t.get("titulo", ""))
+        return "No supe qu\u00e9 hacer con eso."
+
+    def proponer(self, texto):
+        """Le hablas normal y hace cosas.  La IA solo traduce el pedido: el
+        que valida, arma la confirmacion y ejecuta es este programa."""
+        if not IA.disponible(self.estado):
+            self.preguntar(texto)          # ahi se explica por que no hay IA
+            return
+        avisar, cerrar = self.animar("Entendiendo")
+        avisar(CFG.ETAPAS["pensando"])
+        orden = IA.interpretar(self.estado, texto, self._contexto_orden())
+        accion = str((orden or {}).get("accion", "")).strip().lower()
+        if not orden or accion in ("", "ninguna"):
+            cerrar("\U0001F9E0 <i>%s</i>" % N.escapar(texto[:80]))
+            self.preguntar(texto)          # no era una orden: es una pregunta
+            return
+        plan, aviso = self.validar_orden(orden)
+        if not plan:
+            cerrar(aviso or "No entend\u00ed qu\u00e9 quer\u00e9s que haga.")
+            return
+        self.estado["propuesta"] = {"plan": plan, "cuando": time.time()}
+        self.guardar()
+        cerrar(aviso, N.teclado([[("\u2705 Dale", "prop:si"), ("\u274C No", "prop:no")]]))
+
+    def confirmar_propuesta(self, si=True):
+        """El boton de la confirmacion. Devuelve el texto final."""
+        p = self.estado.pop("propuesta", None)
+        if not p or time.time() - float(p.get("cuando", 0)) > 1800:
+            return "Esa propuesta ya venci\u00f3. Ped\u00edmelo de nuevo."
+        if not si:
+            self.guardar()
+            return "\u274C Listo, no hice nada."
+        try:
+            salida = self.ejecutar_plan(p["plan"])
+        except Exception as e:
+            log("[!] no pude ejecutar el plan: %s" % e)
+            return "No pude hacerlo. Prob\u00e1 con el comando."
+        self.guardar()
+        self.olvidar_cache()
+        return salida
+
     # ---------------------------------------------------------- cache
     def _memo(self, nombre, fn, vida=8.0):
         """Guarda lo ya calculado por unos segundos.  Cuando navegas rapido
@@ -1205,6 +1423,8 @@ class Vigilante(object):
             "\u00faltima revisi\u00f3n: %s" % self.estado.get("ultima_corrida", "nunca"),
             "ramos: %d \u00b7 pendientes: %d" % (d["ramos"], d["pendientes"]),
             "memoria: %s" % d["memoria"],
+            "versi\u00f3n: <b>v%s</b> (%s)" % (getattr(VER, "VERSION", "?"),
+                                              getattr(VER, "FECHA", "?")),
             "IA: %s" % d["ia"],
             "pausa: %s" % ("s\u00ed" if self.en_pausa() else "no"),
             "madrugada: %s" % ("sin sonido" if self.cfg().get("noche", True) else "suena"),
@@ -1212,6 +1432,25 @@ class Vigilante(object):
         for clave, cuando_fallo in self.estado.get("fallas", {}).items():
             lineas.append("\u26A0\uFE0F %s desde %s" % (clave, cuando_fallo))
         return "\n".join(lineas) + self.texto_silenciados("\n\n")
+
+    def texto_version(self):
+        """Que version esta corriendo y que trajo. Sale del codigo mismo,
+        asi que no puede mentir: si lo ves, ese codigo es el que corre."""
+        lineas = ["\U0001F195 <b>Versi\u00f3n v%s</b>" % getattr(VER, "VERSION", "?"),
+                  "del %s" % getattr(VER, "FECHA", "?")]
+        if getattr(VER, "TITULO", ""):
+            lineas.append("<i>%s</i>" % N.escapar(VER.TITULO))
+        cambios = getattr(VER, "CAMBIOS", [])
+        if cambios:
+            lineas += ["", "<b>Qu\u00e9 trajo</b>"]
+            lineas += ["\u2022 " + N.escapar(c) for c in cambios[:12]]
+        pruebas = getattr(VER, "A_PROBAR", [])
+        if pruebas:
+            lineas += ["", "<b>Para probar</b>"]
+            lineas += ["%d. %s" % (i, N.escapar(p)) for i, p in enumerate(pruebas[:6], 1)]
+        lineas += ["", "\u00faltima revisi\u00f3n: %s"
+                   % self.estado.get("ultima_corrida", "nunca")]
+        return "\n".join(lineas)
 
     def por_que_no_hay_ia(self):
         """En una linea, por que no hay resumen."""
@@ -1283,6 +1522,7 @@ class Vigilante(object):
         return {
             "tablero": self.tablero,
             "hoy": lambda: ahora().date(),
+            "ahora": ahora,
             "en_pausa": self.en_pausa,
             "lista_ramos": self.lista_ramos,
             "ficha_ramo": self.ficha_ramo,
@@ -1297,6 +1537,9 @@ class Vigilante(object):
             "buscar": self.buscar,
             "resumen_ramo": self.resumen_ramo,
             "preguntar": self.preguntar,
+            "proponer": self.proponer,
+            "confirmar_propuesta": self.confirmar_propuesta,
+            "texto_version": self.texto_version,
             "dibujar_panel": self.dibujar_panel,
             "abrir_panel": lambda saludar=False: self.abrir_panel(saludar=saludar),
             "redibujar_tarjeta": self.redibujar_tarjeta,
@@ -1644,8 +1887,14 @@ class Vigilante(object):
             if faltan < -2:
                 continue
 
-            perfil = CFG.PERFILES.get(self.perfil_de(t.get("clave", "")),
-                                      CFG.PERFILES[CFG.PERFIL_POR_DEFECTO])
+            if t.get("mio"):
+                # Un apunte tuyo suena UNA vez, a la hora que pediste.  Los
+                # perfiles de insistencia son para las entregas de los
+                # profesores, no para tus recordatorios.
+                perfil = list(getattr(CFG, "AVISOS_DE_MIS_RECORDATORIOS", [0]))
+            else:
+                perfil = CFG.PERFILES.get(self.perfil_de(t.get("clave", "")),
+                                          CFG.PERFILES[CFG.PERFIL_POR_DEFECTO])
             if perfil == "diario":
                 hitos = [h for h in range(int(faltan) + 24, 0, -24)]
             else:
@@ -1767,11 +2016,8 @@ class Vigilante(object):
             return
         if self.estado.get("version_avisada") == actual:
             return
-        primera = not self.estado.get("version_avisada")
         self.estado["version_avisada"] = actual
         self.guardar()
-        if primera and self.estado.get("arrancado"):
-            return               # no grito por una version que ya venia puesta
         lineas = ["\U0001F195 <b>Actualizaci\u00f3n aplicada: v%s</b>" % actual]
         if getattr(VER, "TITULO", ""):
             lineas.append("<i>%s</i>" % N.escapar(VER.TITULO))
