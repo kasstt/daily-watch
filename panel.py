@@ -54,7 +54,8 @@ def _raiz(estado, acc):
     pie = "\n\nactualizado %s" % d["ultima"]
 
     botones = N.teclado([
-        [("\U0001F4CC Pendientes%s" % (" (%d)" % d["pendientes"] if d["pendientes"] else ""), "p:pen")],
+        [("\U0001F4CC Pendientes%s" % (" (%d)" % d["pendientes"] if d["pendientes"] else ""), "p:pen"),
+         ("\u23F0 Recordar", "p:rec")],
         [("\U0001F4E5 Novedades%s" % (" (%d)" % d["nuevas"] if d["nuevas"] else ""), "p:nov"),
          ("\U0001F4C5 Semana", "p:sem")],
         [("\U0001F4DA Ramos", "p:ramos"), ("\U0001F514 Avisos", "p:avisos")],
@@ -157,15 +158,92 @@ def _ajustes(estado, acc):
              "IA: %s\n"
              "Silenciados: %d" % (d["memoria"], d["ia"], d["silenciados"]))
     teclado = _cfg(estado).get("teclado", getattr(CFG, "TECLADO_FIJO", True))
+    try:
+        import version as VER
+        texto += "\nVersi\u00f3n: <b>v%s</b>" % VER.VERSION
+    except Exception:
+        pass
     botones = N.teclado([
         [("\U0001F50D Revisar ahora", "a:revisar")],
         [("\u2753 Ayuda", "p:ayuda")],
+        [("\u2699\uFE0F Perfiles de aviso", "p:perfiles")],
+        [("\U0001F195 Versi\u00f3n y novedades", "p:version")],
         [("\u2328\uFE0F Atajos de abajo: %s" % _si_no(teclado), "t:teclado")],
         [("\U0001FA7A Diagn\u00f3stico", "p:diag")],
         [("\U0001F4E4 Exportar todo", "a:exportar")],
         [("\u2B05\uFE0F Volver", "p:raiz")],
     ])
     return texto, botones
+
+
+# ------------------------------------------------------ recordatorios
+ATAJOS_RECORDAR = [
+    ("r:15m", "\u23F0 15 min", 15),
+    ("r:1h", "\u23F0 1 hora", 60),
+    ("r:3h", "\u23F0 3 horas", 180),
+]
+
+
+def _mis_recordatorios(estado):
+    """Los apuntes tuyos que todavia no vencieron ni marcaste."""
+    salida = []
+    for idt, t in (estado.get("tareas") or {}).items():
+        if not t.get("mio") or t.get("hecho"):
+            continue
+        try:
+            f = dt.datetime.strptime(t.get("vence", ""), "%Y-%m-%d %H:%M")
+        except Exception:
+            continue
+        salida.append((f, idt, t))
+    salida.sort(key=lambda x: x[0])
+    return salida
+
+
+def _cuando_corto(f, hoy):
+    if f.date() == hoy.date():
+        return "hoy %s" % f.strftime("%H:%M")
+    if (f.date() - hoy.date()).days == 1:
+        return "ma\u00f1ana %s" % f.strftime("%H:%M")
+    return f.strftime("%d/%m %H:%M")
+
+
+def _recordatorios(estado, acc):
+    """Pantalla de recordatorios: dos toques y listo."""
+    hoy = acc["ahora"]()
+    esperando = estado.get("esperando_rec")
+
+    lineas = ["\u23F0 <b>Recordatorios</b>"]
+    if esperando:
+        try:
+            f = dt.datetime.strptime(esperando, "%Y-%m-%d %H:%M")
+            lineas.append("\u270D\uFE0F Escribime <b>qu\u00e9</b> te recuerdo para "
+                          "<b>%s</b>. Mandalo como mensaje." % _cuando_corto(f, hoy))
+        except Exception:
+            estado.pop("esperando_rec", None)
+            esperando = None
+
+    mios = _mis_recordatorios(estado)
+    if mios:
+        lineas.append("")
+        for f, _, t in mios[:8]:
+            lineas.append("\u2022 <b>%s</b> \u00b7 %s"
+                          % (_cuando_corto(f, hoy), N.escapar(t.get("titulo", ""))))
+    elif not esperando:
+        lineas.append("No tengo ninguno. Eleg\u00ed cu\u00e1ndo y escrib\u00ed qu\u00e9.")
+
+    lineas += ["", "<i>Tambi\u00e9n vale escribirme: recordame el lunes 18:45 osi</i>"]
+
+    filas = [[(txt, cod) for cod, txt, _ in ATAJOS_RECORDAR]]
+    filas.append([("\U0001F319 Hoy 21:00", "r:hoy21"), ("\u2600\uFE0F Ma\u00f1ana 9:00", "r:man9")])
+    for f, idt, t in mios[:5]:
+        titulo = t.get("titulo", "")[:18]
+        filas.append([("\u2705 %s" % titulo, "rl:" + idt),
+                      ("+1h", "rm:" + idt),
+                      ("\U0001F5D1", "rx:" + idt)])
+    if esperando:
+        filas.append([("\u274C Cancelar", "r:no")])
+    filas.append([("\u2B05\uFE0F Volver", "p:raiz")])
+    return "\n".join(lineas), N.teclado(filas)
 
 
 def _simple(titulo, cuerpo, volver="p:raiz"):
@@ -189,6 +267,8 @@ def pantalla(estado, donde, acc):
             filas.append([("\u2B05\uFE0F Volver", "p:r:" + clave)])
             return ("\U0001F4C4 <b>Todo el material</b>\n\n" + acc["material"](clave),
                     N.teclado(filas))
+        if donde == "p:rec":
+            return _recordatorios(estado, acc)
         if donde == "p:avisos":
             return _avisos(estado, acc)
         if donde == "p:dia":
@@ -208,6 +288,13 @@ def pantalla(estado, donde, acc):
                            "p:ajustes")
         if donde == "p:ayuda":
             return _simple("\u2753 <b>Ayuda</b>", acc["texto_ayuda"](), "p:ajustes")
+        if donde == "p:perfiles":
+            import comandos as C
+            return C.texto_perfiles(), N.teclado([
+                [("\u2B05\uFE0F Volver", "p:ajustes")]])
+        if donde == "p:version":
+            return acc["texto_version"](), N.teclado([
+                [("\u2B05\uFE0F Volver", "p:ajustes")]])
     except Exception as e:
         return ("Algo se rompi\u00f3 dibujando esto (%s)." % type(e).__name__,
                 N.teclado([[("\u2B05\uFE0F Volver", "p:raiz")]]))
@@ -230,6 +317,47 @@ def toque(estado, dato, acc, ahora):
 
     if dato.startswith("p:"):
         return "", dato
+
+    # ---- recordatorios rapidos
+    if dato.startswith("r:"):
+        cual = dato[2:]
+        if cual == "no":
+            estado.pop("esperando_rec", None)
+            return "Cancelado", "p:rec"
+        if cual == "hoy21":
+            f = ahora.replace(hour=21, minute=0, second=0, microsecond=0)
+            if f <= ahora:
+                f += dt.timedelta(days=1)
+        elif cual == "man9":
+            f = (ahora + dt.timedelta(days=1)).replace(hour=9, minute=0, second=0,
+                                                       microsecond=0)
+        else:
+            minutos = dict((c[2:], m) for c, _, m in ATAJOS_RECORDAR).get(cual, 60)
+            f = ahora + dt.timedelta(minutes=minutos)
+        estado["esperando_rec"] = f.strftime("%Y-%m-%d %H:%M")
+        return "Escribime qu\u00e9 te recuerdo", "p:rec"
+
+    if dato.startswith(("rl:", "rm:", "rx:")):
+        idt = dato[3:]
+        t = (estado.get("tareas") or {}).get(idt)
+        if not t:
+            return "Ese ya no est\u00e1", "p:rec"
+        if dato.startswith("rl:"):
+            t["hecho"] = True
+            return "Listo", "p:rec"
+        if dato.startswith("rx:"):
+            estado["tareas"].pop(idt, None)
+            return "Borrado", "p:rec"
+        try:
+            f = dt.datetime.strptime(t["vence"], "%Y-%m-%d %H:%M") + dt.timedelta(hours=1)
+        except Exception:
+            f = ahora + dt.timedelta(hours=1)
+        nuevo = "mio_%d" % int(f.timestamp())
+        t["vence"] = f.strftime("%Y-%m-%d %H:%M")
+        estado.setdefault("avisos", {}).pop(idt, None)
+        estado["tareas"].pop(idt, None)
+        estado["tareas"][nuevo] = t
+        return "Movido a las %s" % f.strftime("%H:%M"), "p:rec"
 
     # ---- interruptores
     if dato == "t:noche":
