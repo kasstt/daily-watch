@@ -15,6 +15,7 @@ servicios de hoy hablan el formato de OpenAI, asi que "compatible" cubre
 Groq, DeepSeek, OpenRouter, Together y hasta el propio Gemini.
 """
 import base64
+import json
 import os
 import re
 
@@ -48,9 +49,11 @@ ORDEN_CHARLA = (
     "Sos el ayudante personal de un estudiante de ingenieria. Te paso su "
     "libreta: los ramos que cursa, lo que subieron los profesores, las fechas "
     "de entrega y sus notas personales.\n\n"
-    "Contesta SOLO con esa libreta. Si el dato no esta ahi, deci que no lo "
-    "tenes anotado y en una linea deci donde podria mirarlo. Nunca inventes "
-    "fechas, notas, porcentajes ni archivos.\n\n"
+    "Contesta con esa libreta y con el MANUAL del bot que te paso abajo. Si "
+    "pregunta como se usa algo del bot, contesta con el manual y nombra el "
+    "comando o el boton exacto. Si el dato no esta en ningun lado, deci que "
+    "no lo tenes anotado y en una linea deci donde podria mirarlo. Nunca "
+    "inventes fechas, notas, porcentajes, archivos ni comandos.\n\n"
     "Castellano rioplatense neutro, directo, sin saludos ni preambulo.\n\n"
     "El largo lo decide la pregunta, no vos. Si es una pregunta simple, dos "
     "lineas y listo. Si de verdad hay varias cosas que contar, explayate, "
@@ -60,13 +63,109 @@ ORDEN_CHARLA = (
 )
 
 
+# El manual del bot, en criollo.  Va pegado a cada charla para que la IA
+# pueda contestar dudas de uso sin inventar botones que no existen.
+MANUAL = (
+    "COMO FUNCIONA ESTE BOT (usalo para contestar dudas de uso):\n"
+    "- Miro dos plataformas de la universidad cada 10 minutos y aviso apenas "
+    "aparece algo nuevo: archivos, tareas, foros, cambios de fecha.\n"
+    "- Trabajo de 07:00 a 02:00. De madrugada, si esta puesto el modo noche, "
+    "llego sin sonido.\n"
+    "- Botones de cada aviso: hecho o lo vi, nota, posponer 1 hora, posponer "
+    "3 horas, y la campana tachada para callar ese ramo.\n"
+    "- Panel: Pendientes, Novedades, Semana, Ramos, Avisos, Pausa, Noche, IA "
+    "y Ajustes. Dentro de un ramo hay Ver material, Mandame los archivos y "
+    "Resumen con IA.\n"
+    "- Comandos: /pendientes lo que falta, /ultimo lo ultimo que subieron, "
+    "/semana los ultimos 7 dias, /resumen ramo NOMBRE resumen de un ramo, "
+    "/pausa 3 callarme 3 horas, /noche avisos de madrugada, /estado si todo "
+    "funciona, /perfil cuanto insistir, /callar silenciar un ramo, /revisar "
+    "mirar ahora, /recordar guardar un apunte, /ia prender o apagar los "
+    "resumenes, /exportar mandar todo en un archivo, /ayuda la lista.\n"
+    "- Perfiles de insistencia, o sea cada cuanto recuerdo una entrega:\n"
+    "  suave: 3 dias antes y 12 horas antes.\n"
+    "  normal: 3 dias, 1 dia y 3 horas antes. Es el que viene puesto.\n"
+    "  apretado: 7 dias, 3 dias, 1 dia, 6 horas, 2 horas y 30 minutos antes.\n"
+    "  diario: una vez por dia hasta la entrega.\n"
+    "  Se cambia con /perfil apretado NOMBREDELRAMO, o desde el ramo en el "
+    "panel. Vale uno distinto por ramo.\n"
+    "- Los recordatorios que pide el estudiante suenan una sola vez, a la "
+    "hora pedida.\n"
+    "- Tambien podes pedirme acciones hablando normal, sin comando. Yo "
+    "entiendo el pedido y despues el programa te muestra una confirmacion "
+    "antes de hacer nada.\n"
+)
+
+
+# Ordenes habladas.  La IA SOLO traduce lo que pediste a un JSON. No ejecuta
+# nada: el programa valida, arma la confirmacion y recien ahi se hace.
+ORDEN_ACCION = (
+    "Sos el traductor de pedidos de un bot de avisos de universidad. Te paso "
+    "lo que escribio el estudiante y tenes que devolver UNICAMENTE un objeto "
+    "JSON, sin explicaciones, sin markdown y sin texto alrededor.\n\n"
+    "Formas validas:\n"
+    '{"accion":"recordar","cuando":"AAAA-MM-DD HH:MM","que":"texto corto"}\n'
+    '{"accion":"pausa","horas":3}\n'
+    '{"accion":"seguir"}\n'
+    '{"accion":"callar","ramo":"nombre"}\n'
+    '{"accion":"perfil","perfil":"suave|normal|apretado|diario","ramo":"nombre o vacio"}\n'
+    '{"accion":"revisar"}\n'
+    '{"accion":"resumen","ramo":"nombre"}\n'
+    '{"accion":"hecho","tarea":"titulo o parte del titulo"}\n'
+    '{"accion":"noche"}\n'
+    '{"accion":"ninguna"}\n\n'
+    "Reglas:\n"
+    "- Si el estudiante pregunta algo en vez de pedir una accion, devolve "
+    'accion "ninguna".\n'
+    "- Las fechas se calculan contra el AHORA que te paso, nunca contra otra "
+    "cosa, y siempre en el formato AAAA-MM-DD HH:MM.\n"
+    "- Los nombres de ramo salen de la lista RAMOS que te paso, tal cual.\n"
+    '- Ante la menor duda, accion "ninguna".'
+)
+
+
+def _json_de(salida):
+    """Saca el primer objeto JSON de lo que haya contestado la IA."""
+    if not salida:
+        return None
+    texto = str(salida).strip()
+    texto = re.sub(r"^```[a-zA-Z]*|```$", "", texto).strip()
+    i = texto.find("{")
+    j = texto.rfind("}")
+    if i < 0 or j <= i:
+        return None
+    try:
+        dato = json.loads(texto[i:j + 1])
+    except Exception:
+        return None
+    return dato if isinstance(dato, dict) else None
+
+
+def interpretar(estado, texto, contexto):
+    """Traduce un pedido hablado a un plan. Devuelve dict o None.
+
+    Nunca ejecuta nada y nunca lanza errores hacia afuera."""
+    if not disponible(estado) or not (texto or "").strip():
+        return None
+    pedido = "%s\n\nCONTEXTO\n%s\n\nPEDIDO\n%s" % (
+        ORDEN_ACCION, contexto[:2000], texto[:400])
+    try:
+        salida = PROVEEDORES[CFG.IA["proveedor"]](pedido, [])
+    except Exception as e:
+        estado["fallas_ia"] = estado.get("fallas_ia", 0) + 1
+        estado["ultimo_error_ia"] = str(e)[:200]
+        return None
+    estado["fallas_ia"] = 0
+    return _json_de(salida)
+
+
 def preguntar(estado, pregunta, libreta):
     """Charla sobre lo que el bot ya sabe. Devuelve texto o None."""
     if not disponible(estado) or not (pregunta or "").strip():
         return None
-    pedido = "%s\n\nLIBRETA\n%s\n\nPREGUNTA\n%s" % (
+    pedido = "%s\n\n%s\nLIBRETA\n%s\n\nPREGUNTA\n%s" % (
         ORDEN_CHARLA % CFG.IA.get("largo_charla", 900),
-        libreta[:12000], pregunta[:600])
+        MANUAL, libreta[:12000], pregunta[:600])
     try:
         salida = PROVEEDORES[CFG.IA["proveedor"]](pedido, [])
     except Exception as e:
@@ -96,17 +195,7 @@ def _recortar(texto, limite):
 
 
 def _clave():
-    """La clave, limpia.
-
-    Al pegarla en un secreto es facil que se cuelen comillas, espacios o un
-    salto de linea invisible.  Eso hace que la web conteste 400 y parezca
-    que la clave esta mal cuando en realidad esta bien."""
-    crudo = os.environ.get("IA_KEY", "")
-    crudo = crudo.replace("\r", " ").replace("\n", " ").strip()
-    crudo = crudo.strip("'\"").strip()
-    if crudo.lower().startswith("ia_key="):
-        crudo = crudo[7:].strip()
-    return crudo
+    return os.environ.get("IA_KEY", "").strip()
 
 
 def disponible(estado=None):
