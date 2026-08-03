@@ -89,6 +89,40 @@ def cuanto_vivir(t):
     return max(60.0, min(falta, CFG.HORAS_MAXIMAS * 3600))
 
 
+# Hay plataformas que no ponen la extension en ningun lado: el enlace es
+# algo como /curso/97/modulo/302/archivo/8891 y el texto es el nombre del
+# documento pelado.  Antes eso se descartaba y el archivo nunca llegaba.
+PISTAS_DESCARGA = ("/archivo/", "/archivos/", "/adjunto", "/descargar",
+                   "/download", "/getfile", "/verarchivo", "/bajar",
+                   "pluginfile.php", "forcedownload", "file.php",
+                   "/documento/", "/fichero")
+
+TIPOS_DE_ARCHIVO = (("pdf", ".pdf"), ("msword", ".doc"),
+                    ("wordprocessingml", ".docx"), ("ms-excel", ".xls"),
+                    ("spreadsheetml", ".xlsx"), ("ms-powerpoint", ".ppt"),
+                    ("presentationml", ".pptx"), ("opendocument.text", ".odt"),
+                    ("opendocument.spreadsheet", ".ods"),
+                    ("opendocument.presentation", ".odp"),
+                    ("zip", ".zip"), ("rar", ".rar"), ("7z", ".7z"),
+                    ("csv", ".csv"), ("rtf", ".rtf"), ("plain", ".txt"),
+                    ("jpeg", ".jpg"), ("png", ".png"), ("mp4", ".mp4"))
+
+
+def parece_descarga(url, titulo=""):
+    """True si el enlace huele a descarga aunque no diga la extension."""
+    bajo = str(url or "").lower()
+    return any(p in bajo for p in PISTAS_DESCARGA)
+
+
+def extension_de_tipo(content_type):
+    """De 'application/pdf' saca '.pdf'."""
+    t = (content_type or "").lower().split(";")[0]
+    for pista, ext in TIPOS_DE_ARCHIVO:
+        if pista in t:
+            return ext
+    return ""
+
+
 def es_bajable(url, titulo=""):
     """True si esto parece un archivo y no una pagina."""
     bajo = str(url or "").lower().split("?")[0]
@@ -96,7 +130,7 @@ def es_bajable(url, titulo=""):
     for ext in getattr(CFG, "ADJUNTAR_EXTENSIONES", []):
         if bajo.endswith(ext) or texto.endswith(ext):
             return True
-    return False
+    return parece_descarga(url, titulo)
 
 
 def nombre_de_archivo(respuesta, url, titulo="archivo"):
@@ -114,7 +148,13 @@ def nombre_de_archivo(respuesta, url, titulo="archivo"):
         if str(url or "").lower().split("?")[0].endswith(e):
             ext = e
             break
+    if not ext and respuesta is not None:
+        # el enlace no dice nada, pero el servidor si: le preguntamos que
+        # clase de archivo mando y le ponemos la extension que corresponde
+        ext = extension_de_tipo(respuesta.headers.get("Content-Type", ""))
     limpio_titulo = re.sub(r"[\\/:*?\"<>|]", " ", limpio(titulo))[:70].strip() or "archivo"
+    if ext and limpio_titulo.lower().endswith(ext):
+        return limpio_titulo
     return limpio_titulo + ext
 
 
@@ -180,6 +220,8 @@ def tipo_de(href, texto):
     h = (href or "").lower()
     t = pelado(texto)
     if re.search(r"\." + EXTENSIONES + r"(\?|$)", h) or re.search(r"\." + EXTENSIONES + r"$", t):
+        return "archivo"
+    if parece_descarga(h, texto):
         return "archivo"
     if "foro" in h or "forum" in h or "foro" in t:
         return "foro"
@@ -1023,13 +1065,56 @@ class Vigilante(object):
                 "ultima": mios[0]["f"][5:16].replace("-", "/") if mios else "todav\u00eda nada"}
 
     def material(self, clave):
-        mios = [n for n in self.estado.get("novedades", []) if n.get("c") == clave][:20]
+        """La lista completa de lo que hay en el ramo, ordenada por tipo.
+        Esto es el archivador.  El resumen con IA es otra cosa."""
+        mios = [n for n in self.estado.get("novedades", []) if n.get("c") == clave]
         if not mios:
             return "Todav\u00eda no vi nada en este ramo."
-        return "\n".join("%s %s\n<i>%s</i>" % (icono(n.get("tipo")),
-                                               N.enlace(n["t"], n["u"]),
-                                               n["f"][5:16].replace("-", "/"))
-                         for n in mios)
+
+        cajones = [("archivo", "\U0001F4C4 Archivos"), ("tarea", "\U0001F4DD Tareas"),
+                   ("foro", "\U0001F4AC Foros"), ("material", "\U0001F4CE Otras cosas")]
+        bloques = []
+        for tipo, encabezado in cajones:
+            cosas = [n for n in mios if n.get("tipo", "material") == tipo][:12]
+            if not cosas:
+                continue
+            filas = ["<b>%s</b> (%d)" % (encabezado, len(
+                [n for n in mios if n.get("tipo", "material") == tipo]))]
+            filas += ["  %s  <i>%s</i>" % (N.enlace(n["t"], n["u"]),
+                                           n["f"][5:16].replace("-", "/"))
+                      for n in cosas]
+            bloques.append("\n".join(filas))
+        return "\n\n".join(bloques)
+
+    def cuantos_archivos(self, clave):
+        return len([n for n in self.estado.get("novedades", [])
+                    if n.get("c") == clave and n.get("tipo") == "archivo"])
+
+    def mandar_material(self, clave):
+        """Te deja los documentos del ramo en el chat, sin entrar a la pagina."""
+        g = self.estado.get("grupos", {}).get(clave, {})
+        nombre = g.get("nombre", "ese ramo")
+        archivos = [n for n in self.estado.get("novedades", [])
+                    if n.get("c") == clave and n.get("tipo") == "archivo"]
+        if not archivos:
+            N.enviar("En <b>%s</b> todav\u00eda no hay ning\u00fan documento para bajar."
+                     % N.escapar(nombre))
+            return
+        avisar, cerrar = self.animar("bajando los documentos de " + nombre)
+        s = self.sesiones.get(g.get("fuente"))
+        cuantos = 0
+        if s:
+            cuantos = self.mandar_adjuntos(
+                s, [{"url": n["u"], "titulo": n["t"]} for n in archivos[:8]]) or 0
+        if cuantos:
+            cerrar("\U0001F4E5 Te mand\u00e9 %d documento%s de <b>%s</b>."
+                   % (cuantos, "" if cuantos == 1 else "s", N.escapar(nombre)),
+                   N.teclado([[("\u2B05\uFE0F Volver", "p:r:" + clave)]]))
+        else:
+            cerrar("No pude bajarlos. Te dejo los enlaces:\n\n"
+                   + "\n".join("\U0001F4C4 " + N.enlace(n["t"], n["u"])
+                               for n in archivos[:10]),
+                   N.teclado([[("\u2B05\uFE0F Volver", "p:r:" + clave)]]))
 
     def texto_novedades(self):
         mios = self.estado.get("novedades", [])[:12]
@@ -1128,6 +1213,19 @@ class Vigilante(object):
             lineas.append("\u26A0\uFE0F %s desde %s" % (clave, cuando_fallo))
         return "\n".join(lineas) + self.texto_silenciados("\n\n")
 
+    def por_que_no_hay_ia(self):
+        """En una linea, por que no hay resumen."""
+        if not self.cfg().get("ia", True):
+            return "los res\u00famenes est\u00e1n apagados, prend\u00e9los con /ia on"
+        if self.estado.get("fallas_ia", 0) >= CFG.IA.get("fallas_para_apagar", 5):
+            motivo = self.estado.get("ultimo_error_ia", "")
+            return ("se apag\u00f3 sola por fallas (%s). Prend\u00e9la con /ia on"
+                    % motivo[:80]) if motivo else \
+                   "se apag\u00f3 sola por fallas. Prend\u00e9la con /ia on"
+        if not IA.disponible():
+            return "falta la clave de la IA"
+        return "no me lleg\u00f3 respuesta esta vez, prob\u00e1 de nuevo en un rato"
+
     # ---------------------------------------------------------- a pedido
     def resumen_ramo(self, clave):
         """Vos lo pediste, asi que este trabaja con la animacion puesta."""
@@ -1155,8 +1253,13 @@ class Vigilante(object):
                 + (("\n\n" + N.escapar(resumen["largo"])) if resumen.get("largo") else ""),
                 plegable=bool(resumen.get("largo")))
         else:
-            cuerpo = cabeza + "\n\n" + self.material(clave)
-        cerrar(cuerpo, N.teclado([[("\u2B05\uFE0F Panel", "p:r:" + clave)]]))
+            # Sin IA no repito la lista: para eso esta Ver material.
+            cuerpo = (cabeza + "\n\n\U0001F9E0 No puedo resumirte esto ahora: "
+                      + N.escapar(self.por_que_no_hay_ia())
+                      + "\n\nMientras tanto ten\u00e9s la lista completa en "
+                      "<b>Ver material</b>.")
+        cerrar(cuerpo, N.teclado([[("\U0001F4C4 Ver material", "p:mat:" + clave)],
+                                  [("\u2B05\uFE0F Panel", "p:r:" + clave)]]))
 
     def exportar(self):
         limpio_estado = dict(self.estado)
@@ -1173,6 +1276,8 @@ class Vigilante(object):
             N.mandar_archivo(nombre, contenido, "Todo lo que s\u00e9, en un archivo.")
         elif cual.startswith("resu:"):
             self.resumen_ramo(cual[5:])
+        elif cual.startswith("bajar:"):
+            self.mandar_material(cual[6:])
 
     def _acciones(self):
         return {
@@ -1182,6 +1287,7 @@ class Vigilante(object):
             "lista_ramos": self.lista_ramos,
             "ficha_ramo": self.ficha_ramo,
             "material": self.material,
+            "cuantos_archivos": self.cuantos_archivos,
             "texto_novedades": lambda: self._memo("nov", self.texto_novedades),
             "texto_pendientes": lambda: self._memo("pen", self.texto_pendientes),
             "texto_semana": lambda: self._memo("sem", self.texto_semana),
@@ -1486,7 +1592,7 @@ class Vigilante(object):
         mandados = 0
         for it in items:
             if mandados >= CFG.ADJUNTOS_POR_AVISO:
-                return
+                return mandados
             if not es_bajable(it.get("url", ""), it.get("titulo", "")):
                 continue
             try:
@@ -1494,8 +1600,10 @@ class Vigilante(object):
                 if r.status_code != 200:
                     continue
                 tipo = (r.headers.get("Content-Type") or "").lower()
-                if "html" in tipo:
-                    continue      # es una pagina, no un archivo
+                pegado = (r.headers.get("Content-Disposition") or "").lower()
+                # Si dice html y ademas no viene como descarga, es una pagina.
+                if "html" in tipo and "attachment" not in pegado:
+                    continue
                 crudo = r.content
             except Exception:
                 continue
@@ -1504,6 +1612,7 @@ class Vigilante(object):
             nombre = nombre_de_archivo(r, it["url"], it.get("titulo", "archivo"))
             if N.mandar_documento(nombre, crudo, silencioso=True, responde_a=responde_a):
                 mandados += 1
+        return mandados
 
     # =================================================================
     #  plazos
