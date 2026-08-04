@@ -131,7 +131,11 @@ TOPE_PRIMERA_TANDA = 10          # si la primera mirada honda trae mas, no grita
 # El ultimo seguro: si la pagina del ramo cambio y no supe decir en que,
 # igual te aviso.  Vale mas un aviso de mas que perderte una guia.
 AVISAR_CAMBIO_CIEGO = True
-HORAS_ENTRE_AVISOS_CIEGOS = 6
+# Antes esto era 6 y avisaba tres veces por dia por nada, porque la pagina
+# cambia sola.  Ahora, como maximo, uno por dia y solo si el cambio se
+# repite en dos revisiones seguidas.
+HORAS_ENTRE_AVISOS_CIEGOS = 24
+REVISIONES_PARA_AVISO_CIEGO = 2
 
 SEGUNDOS_ENTRE_REVISIONES = 90   # cada cuanto mira las plataformas
 ESPERA_CHAT = 20             # cuanto se queda escuchando el chat de una
@@ -258,6 +262,32 @@ HORA_REVISAR_RELOJ = "10:00"     # una vez por dia alcanza y sobra
 # De fabrica NO se comparte nada.  Vos abris ramo por ramo y persona por
 # persona.  Lo que llega de otras secciones no es prioridad: un aviso de
 # una linea y se termina ahi.
+# --- avisos escritos del profesor (v5.6) ---
+# Lo que el profe escribe en el tablero de Avisos. No es un enlace, es texto,
+# y era lo unico importante que el bot no miraba.
+AVISAR_AVISOS = True
+AVISOS_ROMPEN_SILENCIO = True
+AVISOS_SUENAN_DE_NOCHE = True
+AVISOS_POR_TANDA = 4
+AVISOS_GUARDADOS = 400
+
+# --- deshacer (v5.6) ---
+# Todo boton que borra, completa o posterga algo se puede deshacer.
+PERMITIR_DESHACER = True
+MINUTOS_PARA_DESHACER = 30
+
+# ------------------------------------------------------------- v5.7
+# A los cuantos dias se archiva solo un aviso del profe.  Un aviso no tiene
+# fecha de entrega, asi que sin esto se quedaba en Pendientes para siempre y
+# en un semestre la lista quedaba inservible.  Con 0 no se archivan nunca.
+DIAS_PARA_ARCHIVAR_AVISOS = 21
+
+# Si los avisos de nivel 2 (prueba, entrega, asistencia) tambien suenan de
+# madrugada.  Va en False a proposito: si todo suena, apagas las alarmas y el
+# dia que hay una suspension de verdad no te enteras.  Ponelo en True si
+# preferis que te despierte cualquier aviso que hable de fechas.
+IMPORTANTES_SUENAN_DE_NOCHE = False
+
 COMPARTIR = True
 COMPARTIR_DE_FABRICA = []        # ningun ramo sale solo. A proposito.
 MAXIMO_PERSONAS = 12             # circulo chico y cerrado
