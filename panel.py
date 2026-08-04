@@ -9,6 +9,7 @@ Los avisos de material nuevo NO pasan por aca.  Llegan sueltos y suenan,
 porque una novedad no puede depender de que vos abras un menu.
 """
 import datetime as dt
+import time
 
 import fuentes as CFG
 import notificar as N
@@ -44,6 +45,88 @@ def _dias_de_callado(ficha, hoy):
 
 
 # ------------------------------------------------------------- pantallas
+# ------------------------------------------------------------ deshacer
+# Todo boton que borra, completa o posterga guarda una copia de como estaba
+# ANTES de tocarlo.  Es un solo paso para atras, que es justo el que hace
+# falta cuando le apretaste al boton equivocado.
+def _guardar_deshacer(estado, que, idt, antes, aviso, volver="p:rec",
+                      nuevo_id=""):
+    # "cuando" va en segundos crudos a proposito: la maquina anda en UTC y el
+    # bot en la zona de Chile. Comparando crudo con crudo no hay lio de zonas.
+    estado["deshacer"] = {"que": que, "id": idt, "antes": dict(antes or {}),
+                          "aviso": aviso, "volver": volver,
+                          "nuevo_id": nuevo_id, "usado": False,
+                          "cuando": time.time()}
+
+
+def _deshacer_vencido(d):
+    """Un deshacer viejo no sirve: ya no te acordas que habias tocado.
+
+    MINUTOS_PARA_DESHACER estaba escrito en fuentes.py y NO se usaba en
+    ninguna parte, asi que el boton sobrevivia horas.
+    """
+    minutos = getattr(CFG, "MINUTOS_PARA_DESHACER", 30)
+    if not minutos:
+        return False                      # 0 = no se vence nunca
+    cuando = d.get("cuando") or 0
+    if not cuando:
+        return False                      # de una version vieja: lo dejo pasar
+    return (time.time() - cuando) > (minutos * 60)
+
+
+def _fila_deshacer(estado):
+    """La fila con el boton de deshacer.
+
+    Si no hay nada que deshacer, o ya se uso, la fila no existe: el boton
+    desaparece solo, sin quedar ahi tentando.
+    """
+    if not getattr(CFG, "PERMITIR_DESHACER", True):
+        return []
+    d = estado.get("deshacer") or {}
+    if not d or d.get("usado") or _deshacer_vencido(d):
+        return []
+    return [("\u21A9\uFE0F Deshacer (%s)" % str(d.get("aviso", ""))[:22], "z:1")]
+
+
+def _deshacer(estado):
+    """Da marcha atras a la ultima accion. Devuelve (aviso, pantalla)."""
+    d = estado.get("deshacer") or {}
+    if not d or d.get("usado"):
+        return "No hay nada para deshacer", "p:raiz"
+    if _deshacer_vencido(d):
+        estado["deshacer"] = None
+        return ("Eso ya pas\u00f3 hace rato, no lo deshago a ciegas", "p:raiz")
+    tareas = estado.setdefault("tareas", {})
+    idt = d.get("id")
+    antes = d.get("antes") or {}
+    que = d.get("que")
+
+    # Silenciar un ramo NO es tocar un pendiente: el id que viene es la clave
+    # del ramo, no la de una tarea. Sin esta rama se creaba una tarea fantasma
+    # con la clave del ramo por titulo y el ramo seguia callado igual.
+    if que == "callar":
+        callados = estado.setdefault("callados", {})
+        if antes:
+            callados[idt] = dict(antes)      # ya estaba callado: lo dejo asi
+        else:
+            callados.pop(idt, None)          # no estaba callado: lo destapo
+        estado["deshacer"] = None
+        return ("\u21A9\uFE0F Listo, ese ramo vuelve a avisarte",
+                d.get("volver") or "p:raiz")
+
+    if que == "mover":
+        # Al posponer, el pendiente cambia de id. Hay que sacar el nuevo.
+        tareas.pop(d.get("nuevo_id") or "", None)
+    if idt:
+        tareas[idt] = dict(antes)
+        estado.setdefault("avisos", {}).pop(idt, None)
+    # Un solo paso para atras: el boton se va y no vuelve.
+    estado["deshacer"] = None
+    titulo = str(antes.get("titulo", ""))[:24]
+    return ("\u21A9\uFE0F Listo, %s volvi\u00f3 como estaba" % titulo,
+            d.get("volver") or "p:raiz")
+
+
 def _raiz(estado, acc):
     d = acc["tablero"]()
     cfg = _cfg(estado)
@@ -53,18 +136,98 @@ def _raiz(estado, acc):
         d["salud"], d["ramos"], d["pendientes"], d["nuevas_hoy"])
     pie = "\n\nactualizado %s" % d["ultima"]
 
-    botones = N.teclado([
+    filas = [
         [("\U0001F4CC Pendientes%s" % (" (%d)" % d["pendientes"] if d["pendientes"] else ""), "p:pen"),
-         ("\u23F0 Recordar", "p:rec")],
+         ("\u23F0 Nuevo recordatorio", "p:rec")],
         [("\U0001F4E5 Novedades%s" % (" (%d)" % d["nuevas"] if d["nuevas"] else ""), "p:nov"),
          ("\U0001F4C5 Semana", "p:sem")],
-        [("\U0001F4DA Ramos", "p:ramos"), ("\U0001F514 Avisos", "p:avisos")],
+        # Los avisos escritos del profe tienen su propia puerta: es donde
+        # aparecen las suspensiones y los cambios de fecha.
+        [("\U0001F4DA Ramos", "p:ramos"),
+         ("\U0001F4E3 Avisos del profe", "p:prof")],
         [("\u23F8 Pausa: %s" % ("s\u00ed" if pausa else "no"), "t:pausa"),
          ("\U0001F319 Noche: %s" % _si_no(cfg.get("noche", True)), "t:noche")],
         [("\U0001F9E0 IA: %s" % _si_no(cfg.get("ia", True)), "t:ia"),
          ("\u2699\uFE0F Ajustes", "p:ajustes")],
-    ])
-    return cabeza + pie, botones
+    ]
+    z = _fila_deshacer(estado)
+    if z:
+        filas.insert(0, z)
+    return cabeza + pie, N.teclado(filas)
+
+
+# ------------------------------------------------------- pendientes
+def _pendientes(estado, acc):
+    """Pendientes que se pueden TOCAR.
+
+    Antes esto era solo texto: vos ve\u00edas la lista y no pod\u00edas hacer nada,
+    ni abrir uno, ni leer la nota que le hab\u00edas puesto, ni marcarlo.
+    Ahora cada pendiente tiene su propia fila.
+    """
+    lista = acc["pendientes_para_panel"]()
+    if not lista:
+        filas = [[("\u23F0 Nuevo recordatorio", "p:rec")],
+                 [("\u2B05\uFE0F Volver", "p:raiz")]]
+        z = _fila_deshacer(estado)
+        if z:
+            filas.insert(0, z)
+        return ("\U0001F4CC <b>Pendientes</b>\n\nNo tenes nada pendiente.",
+                N.teclado(filas))
+
+    lineas = ["\U0001F4CC <b>Pendientes</b>", ""]
+    filas = []
+    for idt, titulo, cuando, es_tarea, tiene_nota in lista:
+        if not es_tarea:
+            marca = "\U0001F4E3"
+        elif tiene_nota:
+            marca = "\U0001F4DD"
+        else:
+            marca = "\u2022"
+        lineas.append("%s <b>%s</b> \u00b7 %s"
+                      % (marca, N.escapar(str(titulo)[:60]), cuando))
+        filas.append([("%s %s" % (marca, str(titulo)[:26]), "pv:" + idt)])
+    lineas += ["", "<i>Toc\u00e1 uno para abrirlo, leer la nota y marcarlo.</i>"]
+    filas.append([("\u23F0 Nuevo recordatorio", "p:rec"),
+                  ("\u2B05\uFE0F Volver", "p:raiz")])
+    z = _fila_deshacer(estado)
+    if z:
+        filas.insert(0, z)
+    return "\n".join(lineas), N.teclado(filas)
+
+
+def _ver_pendiente(estado, acc, idt):
+    """Un pendiente abierto: la nota entera y los botones para cerrarlo."""
+    t = acc["ficha_tarea"](idt)
+    if not t:
+        return ("Ese pendiente ya no est\u00e1.",
+                N.teclado([[("\u2B05\uFE0F Volver", "p:pen")]]))
+    lineas = ["\U0001F4CC <b>%s</b>"
+              % N.escapar(str(t.get("titulo") or "sin t\u00edtulo"))]
+    if t.get("grupo"):
+        lineas.append("\U0001F4DA %s" % N.escapar(str(t["grupo"])))
+    if t.get("vence"):
+        lineas.append("\U0001F4C5 %s" % N.escapar(str(t["vence"])))
+    if t.get("texto"):
+        lineas += ["", N.escapar(str(t["texto"])[:900])]
+    if t.get("nota"):
+        lineas += ["", "\U0001F4DD <b>Tu nota</b>",
+                   N.escapar(str(t["nota"])[:900])]
+    else:
+        lineas += ["", "<i>Sin nota. Toc\u00e1 Escribir nota y mandame el "
+                   "texto: te sirve para la lista de compras o para lo que "
+                   "tengas que acordarte.</i>"]
+    if t.get("url"):
+        lineas += ["", N.enlace("abrir en la plataforma", t["url"])]
+
+    filas = [[("\u2705 Ya est\u00e1", "ql:" + idt),
+              ("\u23F0 +1 hora", "qm:" + idt)],
+             [("\U0001F4DD Escribir nota", "pn:" + idt),
+              ("\U0001F5D1 Borrar", "pb:" + idt)],
+             [("\u2B05\uFE0F Volver", "p:pen")]]
+    z = _fila_deshacer(estado)
+    if z:
+        filas.insert(0, z)
+    return "\n".join(lineas), N.teclado(filas)
 
 
 def _ramos(estado, acc):
@@ -177,9 +340,12 @@ def _ajustes(estado, acc):
         [("\U0001F50D Revisar", "a:revisar"), ("\u2753 Ayuda", "p:ayuda")],
         [("\U0001F195 Versi\u00f3n", "p:version"), ("\u2699\uFE0F Perfiles", "p:perfiles")],
         [("\U0001FA7A Diagn\u00f3stico", "p:diag"), ("\U0001F4E4 Exportar", "a:exportar")],
-        [("\u2328\uFE0F Atajos: %s" % _si_no(teclado), "t:teclado"),
-         ("\u2795 M\u00e1s", "p:mas")],
-        [("\u2B05\uFE0F Volver", "p:raiz")],
+        # Esta fila habia desaparecido al armar la pantalla de avisos, y con
+        # ella la UNICA puerta a p:avisos -> p:dia y p:hora. O sea que no
+        # habia forma de cambiar el dia ni la hora del resumen desde el panel.
+        [("\U0001F514 Cu\u00e1ndo te hablo", "p:avisos"),
+         ("\u2328\uFE0F Atajos: %s" % _si_no(teclado), "t:teclado")],
+        [("\u2795 M\u00e1s", "p:mas"), ("\u2B05\uFE0F Volver", "p:raiz")],
     ])
     return texto, botones
 
@@ -304,6 +470,10 @@ def _recordatorios(estado, acc):
 
     filas = [[(txt, cod) for cod, txt, _ in ATAJOS_RECORDAR]]
     filas.append([("\U0001F319 Hoy 21:00", "r:hoy21"), ("\u2600\uFE0F Ma\u00f1ana 9:00", "r:man9")])
+    filas.append([("\u270D\uFE0F Otra hora", "r:otra")])
+    z = _fila_deshacer(estado)
+    if z:
+        filas.insert(0, z)
     for f, idt, t in mios[:5]:
         titulo = t.get("titulo", "")[:18]
         filas.append([("\u2705 %s" % titulo, "rl:" + idt),
@@ -371,7 +541,20 @@ def pantalla(estado, donde, acc):
         if donde == "p:nov":
             return _simple("\U0001F4E5 <b>Novedades</b>", acc["texto_novedades"]())
         if donde == "p:pen":
-            return _simple("\U0001F4CC <b>Pendientes</b>", acc["texto_pendientes"]())
+            return _pendientes(estado, acc)
+        if donde.startswith("p:ver:"):
+            return _ver_pendiente(estado, acc, donde[6:])
+        if donde.startswith("p:borrar:"):
+            idt = donde[9:]
+            t = acc["ficha_tarea"](idt) or {}
+            return ("\U0001F5D1 <b>\u00bfBorro este pendiente?</b>\n\n%s\n\n"
+                    "<i>Igual vas a poder deshacerlo con un bot\u00f3n.</i>"
+                    % N.escapar(str(t.get("titulo") or "ese pendiente")),
+                    N.teclado([[("\U0001F5D1 S\u00ed, borrar", "qx:" + idt),
+                                ("\u274C No", "p:ver:" + idt)]]))
+        if donde == "p:prof":
+            return _simple("\U0001F4E3 <b>Avisos de los profes</b>",
+                           acc["texto_avisos"](), "p:raiz")
         if donde == "p:sem":
             return _simple("\U0001F4C5 <b>Los \u00faltimos 7 d\u00edas</b>", acc["texto_semana"]())
         if donde == "p:diag":
@@ -415,6 +598,9 @@ def toque(estado, dato, acc, ahora):
         if cual == "no":
             estado.pop("esperando_rec", None)
             return "Cancelado", "p:rec"
+        if cual == "otra":
+            return ("Escribime, por ejemplo: recordame el viernes 18:00 "
+                    "estudiar"), "p:rec"
         if cual == "hoy21":
             f = ahora.replace(hour=21, minute=0, second=0, microsecond=0)
             if f <= ahora:
@@ -428,27 +614,81 @@ def toque(estado, dato, acc, ahora):
         estado["esperando_rec"] = f.strftime("%Y-%m-%d %H:%M")
         return "Escribime qu\u00e9 te recuerdo", "p:rec"
 
-    if dato.startswith(("rl:", "rm:", "rx:")):
+    # ---- deshacer la ultima accion
+    if dato == "z:1":
+        return _deshacer(estado)
+
+    # ---- pendientes: abrir, anotar, borrar con confirmacion
+    if dato.startswith("pv:"):
+        return "", "p:ver:" + dato[3:]
+    if dato.startswith("pn:"):
+        estado["esperando_nota"] = dato[3:]
+        return "Mandame la nota como mensaje", "p:ver:" + dato[3:]
+    if dato.startswith("pb:"):
+        return "", "p:borrar:" + dato[3:]
+
+    # ---- marcar, posponer y borrar un pendiente
+    # Las r: vienen de la pantalla de recordatorios y las q: de la de
+    # pendientes.  Hacen lo mismo, solo cambia a donde vuelven.
+    if dato[:3] in ("rl:", "rm:", "rx:", "ql:", "qm:", "qx:"):
+        volver = "p:rec" if dato[0] == "r" else "p:pen"
+        cual = dato[1]
         idt = dato[3:]
-        t = (estado.get("tareas") or {}).get(idt)
+        tareas = estado.setdefault("tareas", {})
+        t = tareas.get(idt)
         if not t:
-            return "Ese ya no est\u00e1", "p:rec"
-        if dato.startswith("rl:"):
+            return "Ese ya no est\u00e1", volver
+        titulo = str(t.get("titulo", ""))[:20]
+        antes = dict(t)
+
+        if cual == "l":
             t["hecho"] = True
-            return "Listo", "p:rec"
-        if dato.startswith("rx:"):
-            estado["tareas"].pop(idt, None)
-            return "Borrado", "p:rec"
+            _guardar_deshacer(estado, "listo", idt, antes,
+                              "marqu\u00e9 %s" % titulo, volver)
+            return ("\u2705 Marqu\u00e9 %s. Si fue sin querer, apret\u00e1 "
+                    "Deshacer." % titulo), volver
+
+        if cual == "x":
+            tareas.pop(idt, None)
+            estado.setdefault("avisos", {}).pop(idt, None)
+            _guardar_deshacer(estado, "borrar", idt, antes,
+                              "borr\u00e9 %s" % titulo, volver)
+            return ("\U0001F5D1 Borr\u00e9 %s. Si fue sin querer, apret\u00e1 "
+                    "Deshacer." % titulo), volver
+
+        # Posponer una entrega del PROFE no puede tocarle la fecha ni el id.
+        # Antes esto le ponia "mio_<hora>" a CUALQUIER pendiente.  La identidad
+        # de una entrega del profe es su huella: al renombrarla, el bot la
+        # perdia de vista y en la revision siguiente la detectaba como NUEVA.
+        # Resultado: la misma entrega dos veces, y con la fecha del profe
+        # cambiada.  Lo unico que se posterga es el recordatorio.
+        if not t.get("mio"):
+            t["dormida_hasta"] = (ahora + dt.timedelta(hours=1)).strftime(
+                "%Y-%m-%d %H:%M")
+            estado.setdefault("avisos", {}).pop(idt, None)
+            _guardar_deshacer(estado, "listo", idt, antes,
+                              "pospuse %s" % titulo, volver)
+            return ("\u23F0 No te lo recuerdo por 1 hora. La fecha de entrega "
+                    "no la toqu\u00e9, esa la pone el profe."), volver
+
         try:
             f = dt.datetime.strptime(t["vence"], "%Y-%m-%d %H:%M") + dt.timedelta(hours=1)
         except Exception:
             f = ahora + dt.timedelta(hours=1)
+        # El id lleva los segundos, y si igual choca se corre uno.  Antes dos
+        # recordatorios del mismo minuto se pisaban y uno desaparecia.
         nuevo = "mio_%d" % int(f.timestamp())
+        while nuevo in tareas and nuevo != idt:
+            f += dt.timedelta(seconds=1)
+            nuevo = "mio_%d" % int(f.timestamp())
         t["vence"] = f.strftime("%Y-%m-%d %H:%M")
         estado.setdefault("avisos", {}).pop(idt, None)
-        estado["tareas"].pop(idt, None)
-        estado["tareas"][nuevo] = t
-        return "Movido a las %s" % f.strftime("%H:%M"), "p:rec"
+        tareas.pop(idt, None)
+        tareas[nuevo] = t
+        _guardar_deshacer(estado, "mover", idt, antes,
+                          "mov\u00ed %s" % titulo, volver, nuevo_id=nuevo)
+        return ("\u23F0 Mov\u00ed %s a las %s. Si fue sin querer, apret\u00e1 "
+                "Deshacer." % (titulo, f.strftime("%H:%M"))), volver
 
     # ---- compartir: abrir o cerrar UN ramo para UNA persona
     if dato.startswith("tc:"):
