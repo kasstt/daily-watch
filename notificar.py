@@ -10,11 +10,18 @@ Dos formatos importantes:
 - La cita plegable deja el resumen largo escondido detras de un toque.
 """
 import os
+import re
 import time
 
 import requests
 
 ESPERA = 25
+
+# La mensajeria acepta 4096 letras. Dejo aire para las etiquetas que cierro.
+LARGO_MAXIMO = 4000
+
+# Etiquetas que van de a pares y hay que cerrar si el corte las dejo abiertas.
+_PARES = ("b", "i", "u", "s", "code", "pre", "a", "blockquote")
 
 # Una sola conexion viva para todo el chat.  Sin esto, cada mensaje abre y
 # cierra una conexion cifrada nueva, y ese saludo cuesta entre 200 y 400 ms.
@@ -87,14 +94,78 @@ def enlace(texto, url):
     return '<a href="%s">%s</a>' % (escapar(url), escapar(texto))
 
 
+def sin_etiquetas(t):
+    """Saca todas las etiquetas. Es el plan B cuando el formato falla."""
+    return re.sub(r"<[^>]*>", "", t or "")
+
+
+def cortar(texto, largo=LARGO_MAXIMO):
+    """Corta un texto largo SIN partir una etiqueta ni un &simbolo;.
+
+    Antes esto era texto[:4000] a lo bruto, y era una perdida de informacion
+    callada: si el corte caia dentro de un <b> o de un &amp;, la mensajeria
+    rechazaba el mensaje COMPLETO y el usuario no se enteraba de nada.  Le
+    pasaba justo al resumen semanal, que es el mensaje mas largo del bot.
+    """
+    texto = texto or ""
+    if len(texto) <= largo:
+        return texto
+    corte = texto[:largo]
+    # 1. no dejar una etiqueta abierta por la mitad: <b o <a href="...
+    if corte.rfind("<") > corte.rfind(">"):
+        corte = corte[:corte.rfind("<")]
+    # 2. no dejar un simbolo por la mitad: &amp o &#39
+    ultimo_amp = corte.rfind("&")
+    if ultimo_amp > corte.rfind(";") and len(corte) - ultimo_amp <= 10:
+        corte = corte[:ultimo_amp]
+    # 3. cerrar lo que quedo abierto, al reves de como se abrio
+    abiertas = []
+    for m in re.finditer(r"<(/?)([a-zA-Z]+)[^>]*>", corte):
+        cierra, nombre = m.group(1), m.group(2).lower()
+        if nombre not in _PARES:
+            continue
+        if cierra:
+            if abiertas and nombre in abiertas:
+                # saco la ultima igual, no la primera
+                for i in range(len(abiertas) - 1, -1, -1):
+                    if abiertas[i] == nombre:
+                        del abiertas[i]
+                        break
+        else:
+            abiertas.append(nombre)
+    for nombre in reversed(abiertas):
+        corte += "</%s>" % nombre
+    return corte
+
+
 def teclado(filas):
-    """filas = [[(texto, dato), ...], ...]  Los datos son cortos a proposito:
-    la mensajeria solo deja 64 letras por boton."""
+    """filas = [[(texto, dato), ...], ...]
+
+    La mensajeria solo deja 64 BYTES por boton.  Antes esto hacia d[:64], que
+    es peor que no poner el boton: un dato recortado apunta a OTRA cosa, asi
+    que el boton hacia algo distinto de lo que decia.  Ahora, si el dato no
+    entra, el boton NO se pone y queda avisado en el registro.
+    """
     if not filas:
         return None
-    return {"inline_keyboard": [
-        [{"text": t, "callback_data": d[:64]} for t, d in fila if t]
-        for fila in filas if fila]}
+    armadas = []
+    for fila in filas:
+        if not fila:
+            continue
+        botones = []
+        for t, d in fila:
+            if not t:
+                continue
+            dato = str(d or "")
+            if len(dato.encode("utf-8")) > 64:
+                print("[!] boton con dato muy largo, no lo pongo: %s" % dato[:30])
+                continue
+            botones.append({"text": str(t)[:64], "callback_data": dato})
+        if botones:
+            armadas.append(botones)
+    if not armadas:
+        return None
+    return {"inline_keyboard": armadas}
 
 
 def botonera_fija():
@@ -119,7 +190,7 @@ def enviar(texto, silencioso=False, botones=None, teclado_fijo=False):
         return None
     datos = {
         "chat_id": _chat(),
-        "text": texto[:4000],
+        "text": cortar(texto),
         "parse_mode": "HTML",
         "link_preview_options": {"is_disabled": True},
         "disable_notification": bool(silencioso),
@@ -129,6 +200,13 @@ def enviar(texto, silencioso=False, botones=None, teclado_fijo=False):
     elif teclado_fijo:
         datos["reply_markup"] = botonera_fija()
     r = _api("sendMessage", datos)
+    if r is None and "parse" in _ULTIMO_ERROR["texto"].lower():
+        # El formato salio mal. Antes de perder el mensaje, lo mando pelado:
+        # es mejor leerlo sin negritas que no leerlo nunca.
+        print("[!] el formato fallo, mando el mensaje sin etiquetas")
+        datos.pop("parse_mode", None)
+        datos["text"] = cortar(sin_etiquetas(texto))
+        r = _api("sendMessage", datos)
     return (r or {}).get("message_id")
 
 
@@ -138,7 +216,7 @@ def editar(mensaje_id, texto, botones=None, limpiar_botones=True):
     if not listo() or not mensaje_id:
         return False
     datos = {"chat_id": _chat(), "message_id": mensaje_id,
-             "text": texto[:4000], "parse_mode": "HTML",
+             "text": cortar(texto), "parse_mode": "HTML",
              "link_preview_options": {"is_disabled": True}}
     if botones:
         datos["reply_markup"] = botones
@@ -146,6 +224,11 @@ def editar(mensaje_id, texto, botones=None, limpiar_botones=True):
         datos["reply_markup"] = {"inline_keyboard": []}
     if _api("editMessageText", datos, intentos=2) is not None:
         return True
+    if "parse" in _ULTIMO_ERROR["texto"].lower():
+        datos.pop("parse_mode", None)
+        datos["text"] = cortar(sin_etiquetas(texto))
+        if _api("editMessageText", datos, intentos=2) is not None:
+            return True
     # "el mensaje ya dice exactamente eso" no es una falla.  Si lo tomara por
     # falla, el panel se volveria a mandar y se volveria a anclar de gusto.
     return "not modified" in _ULTIMO_ERROR["texto"]
