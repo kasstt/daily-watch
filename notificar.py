@@ -90,8 +90,15 @@ def cita(texto, plegable=False):
     return etiqueta + texto + "</blockquote>"
 
 
+def escapar_url(u):
+    """Una direccion va DENTRO de comillas, asi que ademas de < y & hay que
+    tapar la comilla: una sola comilla en el enlace rompia la etiqueta y con
+    ella el mensaje entero."""
+    return escapar(u).replace('"', "&quot;").replace("'", "&#39;")
+
+
 def enlace(texto, url):
-    return '<a href="%s">%s</a>' % (escapar(url), escapar(texto))
+    return '<a href="%s">%s</a>' % (escapar_url(url), escapar(texto))
 
 
 def sin_etiquetas(t):
@@ -136,6 +143,24 @@ def cortar(texto, largo=LARGO_MAXIMO):
     for nombre in reversed(abiertas):
         corte += "</%s>" % nombre
     return corte
+
+
+# Lo que se le dice al usuario cuando el mensaje no entraba entero.
+AVISO_DE_CORTE = ("\n<i>\u2702\uFE0F Te cort\u00e9 el final: no entraba en un "
+                 "solo mensaje.</i>")
+
+
+def cortar_avisando(texto, largo=LARGO_MAXIMO):
+    """Corta y, si hubo que cortar, LO DICE.
+
+    Un mensaje cortado en silencio se lee como si estuviera completo, asi que
+    el usuario nunca se entera de lo que falta.  Eso es perdida de
+    informacion callada, que es justo lo que este bot no puede hacer.
+    """
+    texto = texto or ""
+    if len(texto) <= largo:
+        return texto
+    return cortar(texto, largo - len(AVISO_DE_CORTE)) + AVISO_DE_CORTE
 
 
 def teclado(filas):
@@ -190,7 +215,7 @@ def enviar(texto, silencioso=False, botones=None, teclado_fijo=False):
         return None
     datos = {
         "chat_id": _chat(),
-        "text": cortar(texto),
+        "text": cortar_avisando(texto),
         "parse_mode": "HTML",
         "link_preview_options": {"is_disabled": True},
         "disable_notification": bool(silencioso),
@@ -205,7 +230,7 @@ def enviar(texto, silencioso=False, botones=None, teclado_fijo=False):
         # es mejor leerlo sin negritas que no leerlo nunca.
         print("[!] el formato fallo, mando el mensaje sin etiquetas")
         datos.pop("parse_mode", None)
-        datos["text"] = cortar(sin_etiquetas(texto))
+        datos["text"] = cortar_avisando(sin_etiquetas(texto))
         r = _api("sendMessage", datos)
     return (r or {}).get("message_id")
 
@@ -216,7 +241,7 @@ def editar(mensaje_id, texto, botones=None, limpiar_botones=True):
     if not listo() or not mensaje_id:
         return False
     datos = {"chat_id": _chat(), "message_id": mensaje_id,
-             "text": cortar(texto), "parse_mode": "HTML",
+             "text": cortar_avisando(texto), "parse_mode": "HTML",
              "link_preview_options": {"is_disabled": True}}
     if botones:
         datos["reply_markup"] = botones
@@ -292,21 +317,40 @@ def mandar_documento(nombre, datos, leyenda="", silencioso=True, responde_a=None
     if not listo() or not datos:
         return None
     campos = {"chat_id": _chat(),
-              "caption": (leyenda or "")[:900],
+              # La leyenda se escapa: el nombre de un archivo del profe con un
+              # & o un < hacia que la mensajeria rechazara el archivo COMPLETO,
+              # asi que el archivo no llegaba y nadie decia por que.
+              "caption": escapar((leyenda or ""))[:900],
               "parse_mode": "HTML",
               "disable_notification": "true" if silencioso else "false"}
     if responde_a:
         campos["reply_to_message_id"] = str(responde_a)
-    try:
-        r = requests.post(
-            "https://api.telegram.org/bot%s/sendDocument" % _token(),
-            data=campos, files={"document": (nombre, datos)}, timeout=180)
+    # Cuando llegan muchos archivos de golpe la mensajeria pide un rato de
+    # espera. Antes eso se tomaba como "no se pudo" y el archivo se perdia.
+    for intento in range(3):
+        try:
+            r = requests.post(
+                "https://api.telegram.org/bot%s/sendDocument" % _token(),
+                data=campos, files={"document": (nombre, datos)}, timeout=180)
+        except Exception:
+            time.sleep(2 * (intento + 1))
+            continue
+        if r.status_code == 429:
+            espera = 3
+            try:
+                espera = int(r.json()["parameters"]["retry_after"]) + 1
+            except Exception:
+                pass
+            time.sleep(min(espera, 30))
+            continue
         if r.status_code != 200:
             try:
                 _ULTIMO_ERROR["texto"] = str(r.json().get("description", "")).lower()
             except Exception:
                 _ULTIMO_ERROR["texto"] = ""
             return None
-        return (r.json().get("result") or {}).get("message_id")
-    except Exception:
-        return None
+        try:
+            return (r.json().get("result") or {}).get("message_id")
+        except Exception:
+            return None
+    return None
