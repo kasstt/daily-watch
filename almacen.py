@@ -160,11 +160,26 @@ def _escribir_gist(gid, estado):
 
 
 # ------------------------------------------------------------------ local
+# Si el archivo estaba pero no se pudo leer, eso NO es lo mismo que empezar
+# de cero, y el bot tiene que poder decirlo en vez de callarse.
+_LECTURA = {"roto": False}
+
+
+def memoria_rota():
+    """True si la ultima lectura del disco encontro la memoria ilegible."""
+    return bool(_LECTURA["roto"])
+
+
 def _leer_local():
+    _LECTURA["roto"] = False
+    if not os.path.isfile(ARCHIVO_LOCAL):
+        return vacio()          # primera vez: esto es normal, no es una falla
     try:
         with open(ARCHIVO_LOCAL, encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
+    except Exception as e:
+        print("[!] la memoria del disco esta ilegible (%s)" % type(e).__name__)
+        _LECTURA["roto"] = True
         return vacio()
 
 
@@ -172,8 +187,20 @@ def _escribir_local(estado):
     carpeta = os.path.dirname(ARCHIVO_LOCAL)
     if carpeta and not os.path.isdir(carpeta):
         os.makedirs(carpeta)
-    with open(ARCHIVO_LOCAL, "w", encoding="utf-8") as f:
+    # Se escribe en un archivo aparte y recien al final se lo pone en su lugar,
+    # de un solo golpe. Antes se escribia ENCIMA del archivo bueno: como la
+    # corrida se puede cortar en cualquier momento, la memoria quedaba partida
+    # al medio, al leerla se descartaba entera y el bot arrancaba en blanco y
+    # volvia a avisar cosas viejas como si fueran nuevas.
+    provisorio = ARCHIVO_LOCAL + ".nuevo"
+    with open(provisorio, "w", encoding="utf-8") as f:
         json.dump(estado, f, indent=1, ensure_ascii=False, sort_keys=True)
+        f.flush()
+        try:
+            os.fsync(f.fileno())
+        except Exception:
+            pass          # hay discos que no lo permiten; el reemplazo igual sirve
+    os.replace(provisorio, ARCHIVO_LOCAL)
 
 
 # ------------------------------------------------------------------ puerta
