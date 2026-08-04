@@ -9,14 +9,23 @@
    "24",
    "3"
   ],
+  "mio_1785800546": [
+   "72",
+   "12",
+   "0"
+  ],
   "mio_1786360440": [],
   "mio_1786360680": []
  },
  "basura": [],
  "callados": {},
+ "clases_avisadas": {},
+ "claves_ajenas": {},
  "config": {
   "ia": true,
-  "noche": false,
+  "noche": true,
+  "pausa_hasta": null,
+  "perfil": "apretado",
   "resumen": {
    "activo": true,
    "cada": "semana",
@@ -25,41 +34,134 @@
   },
   "teclado": false
  },
+ "de_afuera": [],
  "esperando_nota": null,
  "fallas": {},
  "fallas_ia": 0,
  "grupos": {
-  "45def8adfd92342e": {
-   "aviso_ciego": "2026-08-03 18:03",
+  "37c92d6cdfb91534": {
+   "aviso_ciego": "2026-08-04 00:00",
    "cantidad": 0,
    "emoji": "📘",
-   "firma": "eb26dbc72388e2d4",
+   "firma": "b794e9ae4e0d2fe6",
+   "fuente": "A",
+   "honda": true,
+   "id": "98383",
+   "nombre": "ACTIVIDAD DE TITULACIÓN II",
+   "url": "https://adecca.ubiobio.cl/curso/98383",
+   "visto": "2026-08-04 01:59"
+  },
+  "45def8adfd92342e": {
+   "aviso_ciego": "2026-08-04 00:21",
+   "cantidad": 3,
+   "emoji": "📘",
+   "firma": "6f6656327dac9d44",
    "fuente": "A",
    "honda": true,
    "id": "97852",
    "nombre": "CÁLCULO INTEGRAL",
    "url": "https://adecca.ubiobio.cl/curso/97852",
-   "visto": "2026-08-03 18:25"
+   "visto": "2026-08-04 01:59"
   }
  },
- "items": {},
- "novedades": [],
- "panel_donde": "p:r:45def8adfd92342e",
- "panel_id": 286,
+ "ia_claves": {
+  "IA_KEY": {
+   "fallas": 1,
+   "hasta": 1785814199.9033017,
+   "marca": "bab5a7ca63",
+   "motivo": "cupo"
+  }
+ },
+ "ia_sin_claves": true,
+ "items": {
+  "757b3d8ad3a6efb4": "2026-08-03",
+  "a95878aee289b96a": "2026-08-03",
+  "dfed3571bd993160": "2026-08-03",
+  "ee67f5d4ed31055a": "2026-08-03"
+ },
+ "novedades": [
+  {
+   "c": "45def8adfd92342e",
+   "f": "2026-08-03 18:28",
+   "g": "CÁLCULO INTEGRAL",
+   "t": "CÁLCULO INTEGRAL",
+   "tipo": "material",
+   "u": "https://adecca.ubiobio.cl/curso/97852"
+  },
+  {
+   "c": "45def8adfd92342e",
+   "f": "2026-08-03 18:28",
+   "g": "CÁLCULO INTEGRAL",
+   "t": "Programa",
+   "tipo": "material",
+   "u": "https://adecca.ubiobio.cl/curso/97852/modulo/516273"
+  },
+  {
+   "c": "45def8adfd92342e",
+   "f": "2026-08-03 18:28",
+   "g": "CÁLCULO INTEGRAL",
+   "t": "LInk clases",
+   "tipo": "material",
+   "u": "https://adecca.ubiobio.cl/curso/97852/modulo/517219"
+  },
+  {
+   "c": "45def8adfd92342e",
+   "f": "2026-08-03 18:28",
+   "g": "CÁLCULO INTEGRAL",
+   "t": "Clases",
+   "tipo": "material",
+   "u": "https://adecca.ubiobio.cl/curso/97852/modulo/516377"
+  }
+ ],
+ "panel_donde": "p:diag",
+ "panel_id": 508,
  "pendientes_ia": {},
- "perfiles": {},
+ "perfiles": {
+  "45def8adfd92342e": "apretado"
+ },
+ "personas": {},
+ "repo_aviso": "",
+ "repo_aviso_ciego": "",
+ "repo_dias": 0,
+ "repo_motivo": "",
+ "repo_movido": "2026-08-04T02:13:06Z",
+ "repo_toques": 0,
  "tareas": {
+  "82d857275dd68638": {
+   "clave": "45def8adfd92342e",
+   "es_tarea": false,
+   "grupo": "CÁLCULO INTEGRAL",
+   "hecho": false,
+   "mensaje_id": 289,
+   "nacio": "2026-08-03 18:28",
+   "nota": "",
+   "tarjeta": "📘 <b>CÁLCULO INTEGRAL</b>\n📎 <a href=\"https://adecca.ubiobio.cl/curso/97852/modulo/516377\">Clases</a>\n📎 <a href=\"https://adecca.ubiobio.cl/curso/97852/modulo/517219\">LInk clases</a>\n📎 <a href=\"https://adecca.ubiobio.cl/curso/97852/modulo/516273\">Programa</a>\n📎 <a href=\"https://adecca.ubiobio.cl/curso/97852\">CÁLCULO INTEGRAL</a>\n<i>18:28</i>",
+   "titulo": "Clases",
+   "url": "https://adecca.ubiobio.cl/curso/97852/modulo/516377",
+   "vence": ""
+  },
   "mio_1785759296": {
    "clave": "",
    "dormida_hasta": "2026-08-03 10:51",
    "grupo": "",
-   "hecho": false,
+   "hecho": true,
    "mio": true,
    "nota": "",
    "tarjeta": "📘 <b>Recordatorio</b>\n⏰ faltan <b>54 minutos</b>\npapi\nvence lun 3 ago 08:14",
    "titulo": "papi",
    "url": "",
    "vence": "2026-08-03 08:14"
+  },
+  "mio_1785800546": {
+   "clave": "",
+   "grupo": "",
+   "hecho": true,
+   "mio": true,
+   "nota": "Hola no",
+   "tarjeta": "📘 <b>Recordatorio</b>\n⚠️ vence <b>ahora</b>\nhola\nvence lun 3 ago 19:42\n📝 Hola no",
+   "titulo": "hola",
+   "url": "",
+   "vence": "2026-08-03 19:42"
   },
   "mio_1786360440": {
    "clave": "",
@@ -82,11 +184,13 @@
    "vence": "2026-08-10 07:18"
   }
  },
- "tg_offset": 791138711,
- "ultima_corrida": "03/08 18:25",
- "ultimo_error_ia": "la clave no sirve o no tiene permiso. Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.googl",
- "ultimo_info": 270,
+ "tg_offset": 791138946,
+ "ultima_corrida": "04/08 01:59",
+ "ultimo_error_ia": "no me quedan claves. clave 1 sin cupo",
+ "ultimo_info": 482,
  "ultimo_latido": "2026-08-03",
+ "ultimo_reloj": "2026-08-03",
  "ultimo_resumen": "",
- "version": 2
+ "version": 2,
+ "version_avisada": "5.5"
 }
