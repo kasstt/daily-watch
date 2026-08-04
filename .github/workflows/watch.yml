@@ -19,7 +19,12 @@ permissions:
 # corta el turno viejo y arranca el nuevo en el momento.
 concurrency:
   group: watch
-  cancel-in-progress: true
+  # Un turno nuevo que llega SOLO porque el reloj sono no tiene que matar al
+  # que esta trabajando: si lo corta justo despues de mandarte un aviso y
+  # antes de anotarlo, el aviso se repite en la vuelta siguiente.  Los turnos
+  # que arrancan a mano o por un cambio de codigo SI cortan al viejo, que es
+  # justo lo que hace falta al actualizar.
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
 jobs:
   mirar:
