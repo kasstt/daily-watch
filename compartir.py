@@ -35,6 +35,19 @@ import hmac
 import os
 import re
 
+try:                                  # la maquina de GitHub anda en otro huso
+    from zoneinfo import ZoneInfo
+    import fuentes as _CFG
+    _ZONA = ZoneInfo(_CFG.ZONA_HORARIA)
+except Exception:
+    _ZONA = None
+
+
+def _ahora():
+    """La hora de tu ciudad.  Con el reloj de la maquina, lo que compartiste a
+    las 9 de la noche quedaba fechado al dia siguiente."""
+    return dt.datetime.now(_ZONA) if _ZONA else dt.datetime.now()
+
 # ------------------------------------------------------------ lo que sale
 # Lista blanca: SOLO estos campos salen de tu memoria hacia otra persona.
 # Si manana alguien agrega un campo nuevo con datos tuyos, no sale, porque
@@ -171,7 +184,7 @@ def agregar(estado, pid, alias="", hoy=None):
     ficha = {
         "alias": limpiar_alias(alias or "companero"),
         "chat": pid,
-        "desde": (hoy or dt.datetime.now()).strftime("%Y-%m-%d"),
+        "desde": (hoy or _ahora()).strftime("%Y-%m-%d"),
         "ramos": [],          # los ramos MIOS que esta persona puede ver
         "bloqueada": False,
         "recibidos": 0,       # cuantas cosas me mando
@@ -365,7 +378,7 @@ def recibir(estado, pid, items, hoy=None, huellas=None):
     f = persona(estado, pid)
     if not f or f.get("bloqueada"):
         return [], 0
-    hoy = hoy or dt.datetime.now()
+    hoy = hoy or _ahora()
     huellas = mis_huellas(estado) if huellas is None else huellas
     bolsa = estado.setdefault("de_afuera", [])
     ya = set(x.get("h", "") for x in bolsa)
@@ -514,7 +527,7 @@ def guardar_clave(estado, pid, clave_en_claro):
     estado.setdefault("claves_ajenas", {})[pid] = {
         "paquete": paquete,
         "largo": len(clave),
-        "desde": dt.datetime.now().strftime("%Y-%m-%d"),
+        "desde": _ahora().strftime("%Y-%m-%d"),
     }
     return True, ""
 
