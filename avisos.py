@@ -135,10 +135,26 @@ def es_ruido(texto):
     return False
 
 
+def _regla(palabras):
+    """Palabras ENTERAS, no pedazos de palabra.
+
+    Antes esto era "esta el pedazo adentro", asi que "toma" saltaba con
+    "tomate una foto" y "paro" con "no repare en eso": avisos comunes salian
+    marcados como urgentes y sonaban de madrugada.  Un despertador que suena
+    de gusto se termina apagando, y el dia que hay una suspension de verdad
+    ya nadie lo escucha.  Se acepta el plural (una s o es al final).
+    """
+    piezas = "|".join(re.escape(p) for p in palabras)
+    return re.compile(r"(?<![a-z0-9])(?:%s)(?:es|s)?(?![a-z0-9])" % piezas)
+
+
+RE_URGENTES = _regla(PALABRAS_URGENTES)
+RE_IMPORTANTES = _regla(PALABRAS_IMPORTANTES)
+
+
 def urgente(texto):
     """Nivel 1: te cambia el dia. Suena aunque sea de madrugada."""
-    plano = _sin_tildes(texto)
-    return any(p in plano for p in PALABRAS_URGENTES)
+    return bool(RE_URGENTES.search(_sin_tildes(texto)))
 
 
 def importante(texto):
@@ -149,8 +165,7 @@ def importante(texto):
     """
     if urgente(texto):
         return False
-    plano = _sin_tildes(texto)
-    return any(p in plano for p in PALABRAS_IMPORTANTES)
+    return bool(RE_IMPORTANTES.search(_sin_tildes(texto)))
 
 
 def prioridad(ficha):
