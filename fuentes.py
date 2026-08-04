@@ -298,3 +298,16 @@ AGRUPAR_LO_DE_AFUERA = True      # si llegan cinco cosas, va un solo aviso
 # Lo de afuera NO entra en los perfiles de insistencia ni en el
 # recordatorio de "no lo viste".  Esto no se puede prender: es la regla.
 GUARDADOS_DE_AFUERA = 60
+
+# ------------------------------------------------------------- v5.8
+# Cuantas horas despues de vencido se olvida un recordatorio puesto por vos.
+HORAS_PARA_OLVIDAR_MIO = 12
+
+# La memoria guarda una huella por cada cosa vista.  Sin tope crecia para
+# siempre: el gist se hacia gigante, tardaba en subir y un dia deja de subir.
+# Un ano de huellas alcanza de sobra para no volver a avisar lo mismo.
+DIAS_PARA_PODAR_HUELLAS = 400
+
+# Cuantos pendientes ya cerrados se conservan.  Los viejos no le sirven a
+# nadie y solo hacen mas pesada la memoria.
+PENDIENTES_CERRADOS_GUARDADOS = 300
