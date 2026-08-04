@@ -69,10 +69,16 @@ def _raiz(estado, acc):
 
 def _ramos(estado, acc):
     hoy = acc["hoy"]()
-    filas = []
+    # Dos por fila: la pantalla entra sin scroll.
+    filas, fila = [], []
     for clave, nombre, emoji in acc["lista_ramos"]():
         marca = " \U0001F515" if _callado(estado, clave) else ""
-        filas.append([("%s %s%s" % (emoji, nombre[:26], marca), "p:r:" + clave)])
+        fila.append(("%s %s%s" % (emoji, nombre[:16], marca), "p:r:" + clave))
+        if len(fila) == 2:
+            filas.append(fila)
+            fila = []
+    if fila:
+        filas.append(fila)
     if not filas:
         filas = [[("todav\u00eda no veo ning\u00fan ramo", "p:raiz")]]
     filas.append([("\u2B05\uFE0F Volver", "p:raiz")])
@@ -96,12 +102,16 @@ def _ramo(estado, acc, clave):
         texto += "\n\U0001F4C4 %d documento%s guardado%s" % (
             cuantos, "" if cuantos == 1 else "s", "" if cuantos == 1 else "s")
 
+    # El buscador de archivos, con los tres alcances a mano.
     botones = N.teclado([
-        [("\U0001F4C4 Ver material", "p:mat:" + clave)],
-        [("\U0001F4E5 Mandame los archivos", "a:bajar:" + clave)],
-        [("\U0001F9E0 Resumen con IA", "a:resu:" + clave)],
-        [("\U0001F514 Perfil: %s" % _perfil_de(estado, clave), "t:perfil:" + clave)],
-        [("\U0001F514 Volver a avisar" if ficha_callado else "\U0001F515 Silenciar",
+        [("\U0001F4E5 Semana", "a:baj:%s:semana" % clave),
+         ("\U0001F4C5 Mes", "a:baj:%s:mes" % clave)],
+        [("\U0001F5C2 Todo", "a:baj:%s:todo" % clave),
+         ("\U0001F50E Por nombre", "p:busc:" + clave)],
+        [("\U0001F4C4 Material", "p:mat:" + clave),
+         ("\U0001F9E0 Resumen", "a:resu:" + clave)],
+        [("\U0001F514 %s" % _perfil_de(estado, clave), "t:perfil:" + clave),
+         ("\U0001F514 Volver a avisar" if ficha_callado else "\U0001F515 Silenciar",
           "t:callar:" + clave)],
         [("\u2B05\uFE0F Volver", "p:ramos")],
     ])
@@ -116,14 +126,13 @@ def _avisos(estado, acc):
              "Perfil general: %s." % (cada, r.get("hora"),
                                       _cfg(estado).get("perfil", CFG.PERFIL_POR_DEFECTO)))
     botones = N.teclado([
-        [("\U0001F4C5 Resumen: %s" % ("encendido" if r.get("activo") else "apagado"),
-          "t:resumen")],
-        [("Cambiar d\u00eda", "p:dia"), ("Cambiar hora", "p:hora")],
-        [("\U0001F501 Cada: %s" % ("d\u00eda" if r.get("cada") == "dia" else "semana"),
+        [("\U0001F4C5 Resumen: %s" % ("s\u00ed" if r.get("activo") else "no"), "t:resumen"),
+         ("\U0001F501 Cada: %s" % ("d\u00eda" if r.get("cada") == "dia" else "semana"),
           "t:cada")],
+        [("D\u00eda", "p:dia"), ("Hora", "p:hora")],
         [("\U0001F319 Madrugada: %s" % ("sin sonido" if _cfg(estado).get("noche", True)
-                                        else "suena"), "t:noche")],
-        [("\U0001F514 Perfil general: %s" % _cfg(estado).get("perfil", CFG.PERFIL_POR_DEFECTO),
+                                        else "suena"), "t:noche"),
+         ("\U0001F514 %s" % _cfg(estado).get("perfil", CFG.PERFIL_POR_DEFECTO),
           "t:perfilg")],
         [("\u2B05\uFE0F Volver", "p:raiz")],
     ])
@@ -163,17 +172,77 @@ def _ajustes(estado, acc):
         texto += "\nVersi\u00f3n: <b>v%s</b>" % VER.VERSION
     except Exception:
         pass
+    # Cinco filas como mucho, de lo mas usado a lo menos usado.
     botones = N.teclado([
-        [("\U0001F50D Revisar ahora", "a:revisar")],
-        [("\u2753 Ayuda", "p:ayuda")],
-        [("\u2699\uFE0F Perfiles de aviso", "p:perfiles")],
-        [("\U0001F195 Versi\u00f3n y novedades", "p:version")],
-        [("\u2328\uFE0F Atajos de abajo: %s" % _si_no(teclado), "t:teclado")],
-        [("\U0001FA7A Diagn\u00f3stico", "p:diag")],
-        [("\U0001F4E4 Exportar todo", "a:exportar")],
+        [("\U0001F50D Revisar", "a:revisar"), ("\u2753 Ayuda", "p:ayuda")],
+        [("\U0001F195 Versi\u00f3n", "p:version"), ("\u2699\uFE0F Perfiles", "p:perfiles")],
+        [("\U0001FA7A Diagn\u00f3stico", "p:diag"), ("\U0001F4E4 Exportar", "a:exportar")],
+        [("\u2328\uFE0F Atajos: %s" % _si_no(teclado), "t:teclado"),
+         ("\u2795 M\u00e1s", "p:mas")],
         [("\u2B05\uFE0F Volver", "p:raiz")],
     ])
     return texto, botones
+
+
+# ------------------------------------------- compartir y clases por video
+def _mas(estado, acc):
+    """Lo que se usa poco pero tiene que estar a mano."""
+    personas = len(estado.get("personas", {}) or {})
+    afuera = len(estado.get("de_afuera", []) or [])
+    texto = ("\u2795 <b>M\u00e1s cosas</b>\n"
+             "Compartiendo con %d persona%s\n"
+             "De otras secciones: %d cosa%s guardada%s"
+             % (personas, "" if personas == 1 else "s",
+                afuera, "" if afuera == 1 else "s",
+                "" if afuera == 1 else "s"))
+    return texto, N.teclado([
+        [("\U0001F3A5 Clases por video", "p:clases"),
+         ("\U0001F91D Compartir", "p:comp")],
+        [("\U0001F4E8 Otras secciones", "p:afuera"),
+         ("\u23F3 Reloj de GitHub", "a:reloj")],
+        [("\u2B05\uFE0F Volver", "p:ajustes")],
+    ])
+
+
+def _compartir(estado, acc):
+    """Con quien compartis y que ve cada uno."""
+    texto = "\U0001F91D <b>Compartir material</b>\n\n" + acc["texto_compartir"]()
+    filas = []
+    for pid, f in (acc["personas"]() or [])[:6]:
+        cuantos = len(f.get("ramos") or [])
+        marca = "\U0001F6AB" if f.get("bloqueada") else (
+            "\u2705" if cuantos else "\u26AA")
+        filas.append([("%s %s (%d)" % (marca, f.get("alias", "?")[:14], cuantos),
+                       "p:per:" + str(pid))])
+    if estado.get("personas"):
+        filas.append([("\U0001F512 Cerrar todo", "a:cerrar_compartir")])
+    filas.append([("\u2B05\uFE0F Volver", "p:mas")])
+    return texto, N.teclado(filas)
+
+
+def _persona(estado, acc, pid):
+    """Que ramos MIOS ve esta persona.  Se abre y se cierra uno por uno."""
+    ficha = (estado.get("personas") or {}).get(str(pid))
+    if not ficha:
+        return ("Esa persona ya no est\u00e1.",
+                N.teclado([[("\u2B05\uFE0F Volver", "p:comp")]]))
+    abiertos = set(ficha.get("ramos") or [])
+    texto = ("\U0001F464 <b>%s</b>\n"
+             "Ve %d ramo%s tuyo%s. Lo dem\u00e1s no lo ve.\n\n"
+             "<i>Toc\u00e1 un ramo para abrirlo o cerrarlo. Sale material nada "
+             "m\u00e1s: t\u00edtulo, fecha y enlace. Nunca tus notas ni tus "
+             "pendientes.</i>"
+             % (N.escapar(ficha.get("alias", "?")), len(abiertos),
+                "" if len(abiertos) == 1 else "s",
+                "" if len(abiertos) == 1 else "s"))
+    filas = []
+    for clave, nombre, _emoji in (acc["lista_ramos"]() or [])[:8]:
+        marca = "\u2705" if clave in abiertos else "\u2B1C"
+        filas.append([("%s %s" % (marca, str(nombre)[:22]),
+                       "tc:%s:%s" % (pid, clave))])
+    filas.append([("\U0001F6AB Sacar", "tq:" + str(pid)),
+                  ("\u2B05\uFE0F Volver", "p:comp")])
+    return texto, N.teclado(filas)
 
 
 # ------------------------------------------------------ recordatorios
@@ -259,11 +328,21 @@ def pantalla(estado, donde, acc):
             return _ramos(estado, acc)
         if donde.startswith("p:r:"):
             return _ramo(estado, acc, donde[4:])
+        if donde.startswith("p:busc:"):
+            clave = donde[7:]
+            estado["esperando_busqueda"] = clave
+            return ("\U0001F50E <b>Buscar por nombre</b>\n"
+                    "Escrib\u00edme un pedazo del nombre del archivo, por ejemplo "
+                    "<b>gu\u00eda 3</b> o <b>programa</b>.\n"
+                    "Busco en todo el ramo y te digo cu\u00e1ntos encontr\u00e9 antes "
+                    "de mandarte nada.",
+                    N.teclado([[("\u2B05\uFE0F Volver", "p:r:" + clave)]]))
         if donde.startswith("p:mat:"):
             clave = donde[6:]
             filas = []
             if acc["cuantos_archivos"](clave):
-                filas.append([("\U0001F4E5 M\u00e1ndame los archivos", "a:bajar:" + clave)])
+                filas.append([("\U0001F4E5 Semana", "a:baj:%s:semana" % clave),
+                              ("\U0001F5C2 Todo", "a:baj:%s:todo" % clave)])
             filas.append([("\u2B05\uFE0F Volver", "p:r:" + clave)])
             return ("\U0001F4C4 <b>Todo el material</b>\n\n" + acc["material"](clave),
                     N.teclado(filas))
@@ -277,6 +356,18 @@ def pantalla(estado, donde, acc):
             return _hora(estado, acc)
         if donde == "p:ajustes":
             return _ajustes(estado, acc)
+        if donde == "p:mas":
+            return _mas(estado, acc)
+        if donde == "p:comp":
+            return _compartir(estado, acc)
+        if donde.startswith("p:per:"):
+            return _persona(estado, acc, donde[6:])
+        if donde == "p:clases":
+            return _simple("\U0001F3A5 <b>Clases por videoconferencia</b>",
+                           acc["texto_clases"](), "p:mas")
+        if donde == "p:afuera":
+            return _simple("\U0001F4E8 <b>De otras secciones</b>",
+                           acc["texto_afuera"](), "p:mas")
         if donde == "p:nov":
             return _simple("\U0001F4E5 <b>Novedades</b>", acc["texto_novedades"]())
         if donde == "p:pen":
@@ -358,6 +449,23 @@ def toque(estado, dato, acc, ahora):
         estado["tareas"].pop(idt, None)
         estado["tareas"][nuevo] = t
         return "Movido a las %s" % f.strftime("%H:%M"), "p:rec"
+
+    # ---- compartir: abrir o cerrar UN ramo para UNA persona
+    if dato.startswith("tc:"):
+        pid, _, clave = dato[3:].partition(":")
+        if not clave:
+            return "No entend\u00ed ese ramo", "p:comp"
+        abierto, bien = acc["alternar_ramo"](pid, clave)
+        if not bien:
+            return "Esa persona ya no est\u00e1", "p:comp"
+        nombre = acc["nombre"](clave)
+        return ("Ahora ve %s" % nombre) if abierto else (
+            "Ya no ve %s" % nombre), "p:per:" + pid
+
+    if dato.startswith("tq:"):
+        pid = dato[3:]
+        acc["sacar_persona"](pid)
+        return "Listo, no comparte m\u00e1s con vos", "p:comp"
 
     # ---- interruptores
     if dato == "t:noche":
