@@ -6,7 +6,47 @@ roto, no lo va a poder arreglar solo.
 
 Al dia con la **v5.4**.
 
-### Lo que cambio en la v5.5 (leelo antes de tocar nada)
+### Lo que cambio en la v5.6 (leelo antes de tocar nada)
+
+1. **`avisos.py` es nuevo.** Lee los avisos ESCRITOS del profe, que no son
+   enlaces. Es texto puro: no toca la red, no guarda estado, no importa nada
+   del bot y se prueba en seco. `avisos_de_la_pagina(html, titulo_ramo)`
+   devuelve `[{"titulo", "texto", "huella", "urgente"}]` y NUNCA revienta.
+   `explorar_ramo` llena `g["avisos"]` y `_ver_grupo` llama a `avisos_nuevos`.
+2. **Regla del envio: mandar PRIMERO, anotar DESPUES.** Si `N.enviar` devuelve
+   `None`, el mensaje no salio y no se puede marcar como avisado, porque el bot
+   nunca lo reintenta y el usuario se queda sin la informacion. Esto rompio el
+   aviso de version. Vale para `avisar_version`, `avisos_nuevos` y todo lo que
+   marque huellas como vistas.
+3. **`cancel-in-progress` va en `true`.** Con `false`, un push queda en la cola
+   detras del trabajo viejo, que sigue corriendo con el codigo anterior hasta
+   `HORAS_MAXIMAS`. El sintoma es "actualice y el bot dice la version vieja".
+   No es culpa del actualizador.
+4. **Todo boton destructivo deja Deshacer.** `panel._guardar_deshacer` guarda
+   una copia del estado anterior en `estado["deshacer"]`, `_fila_deshacer` pone
+   el boton `z:1` y `_deshacer` restaura y apaga el boton. Al posponer cambia el
+   id, asi que hay que guardar `nuevo_id` y borrarlo al deshacer.
+5. **Los ids de recordatorio llevan segundos y se corren si chocan.** `mio_<ts>`
+   por minuto hacia que dos apuntes del mismo minuto se pisaran. Vale en
+   `comandos._recordar`, en la rama `esperando_rec` y en `panel.toque`.
+6. **Un apunte tuyo lleva `es_tarea: False`.** Sin eso cae en PARA ENTREGAR y se
+   mezcla con las entregas del ramo.
+7. **El aviso ciego tiene tres frenos.** Firma ya vista antes marca
+   `pagina_inquieta` y calla el ramo, `ciego_veces` exige dos revisiones
+   seguidas, y `HORAS_ENTRE_AVISOS_CIEGOS` limita a uno por dia. Si vuelven las
+   falsas alarmas, lo primero es agregar el patron nuevo a `RE_VOLATIL`, no
+   bajar los frenos.
+8. **Codigos nuevos del panel.** Pantallas `p:pen` (con botones), `p:ver:<id>`,
+   `p:borrar:<id>`, `p:prof`. Botones `pv:`, `pn:`, `pb:`, `z:1`, y `ql:` `qm:`
+   `qx:` que son iguales a `rl:` `rm:` `rx:` pero vuelven a `p:pen`.
+9. **Comandos nuevos:** `/avisos` y `/deshacer`. `/pendientes` ahora abre la
+   pantalla con botones en vez de mandar texto.
+10. **`python3 _p18.py` es obligatorio** antes de entregar, junto con `_p16.py`
+    y `_p17.py`.
+11. **Nunca escribir el numero de version a mano en una prueba.** Ya fallo dos
+    veces por esto. Usar `VER.VERSION`.
+
+### Lo que cambio en la v5.5
 
 Tres archivos nuevos y ninguno depende de `watcher.py`, para que no haya
 importaciones circulares:
@@ -399,6 +439,17 @@ subir a GitHub por la API de contenidos.
 
 ## 12. Las pruebas
 
+Son tres y hay que correr las tres:
+
+```
+python3 _p16.py && python3 _p17.py && python3 _p18.py
+```
+
+`_p18.py` cubre los doce puntos de la v5.6: avisos escritos, aviso ciego,
+recordatorios, pendientes con botones, deshacer, aviso de version y clave
+rechazada. No toca internet ni necesita claves.
+
+
 Corren sin conexion y sin claves reales.
 
 ```
@@ -441,3 +492,36 @@ prueba le pones hora, `callado()` no lo lee y la prueba miente.
 6. Anota lo que cambiaste en `PROBLEMAS.md`.
 7. Antes de armar un parche, fijate si el anterior esta puesto. Ya paso que
    el usuario mandara una carpeta sin aplicar el parche previo.
+
+---
+
+## Auditoría de la v5.7 — reglas que salieron de revisar el bot completo
+
+El detalle de las 15 fallas está en `PROBLEMAS.md`. Acá van las reglas que
+hay que respetar al escribir código nuevo:
+
+1. **Nunca cortes texto con formato a lo bruto.** Usá `notificar.cortar()`.
+   Un `<b>` partido al medio hace que la plataforma rechace el mensaje
+   COMPLETO, y eso es una pérdida de información silenciosa.
+2. **Nunca recortes el dato de un botón.** Si no cabe en 64 bytes, el botón
+   no se pone. Un dato recortado apunta a otra cosa.
+3. **Nunca le cambies el id a un pendiente que vino de la plataforma.** Su
+   identidad es su huella; si la renombrás, el bot lo detecta como nuevo y te
+   queda duplicado.
+4. **Una opción de configuración definida y sin usar es un error**, no una
+   función pendiente. O se usa o se borra.
+5. **Toda pantalla nueva necesita un botón que lleve a ella.** Si no, existe
+   pero nadie puede llegar.
+6. **El teclado fijo se compara por texto EXACTO**, nunca por subcadena, o el
+   usuario no puede hablarle normal al bot.
+7. **Nunca le pongas a una variable local el nombre de un módulo importado.**
+8. **Un tipo nuevo de deshacer exige una rama nueva en `panel._deshacer`.**
+   La cola genérica asume que el id es de una tarea.
+9. **Una pantalla rota se detecta por el texto `"se rompi"`**, no contando
+   filas de botones.
+10. **Solo despierta de madrugada lo que le cambia el día al usuario.** Si
+    todo suena, se apagan las alarmas y se pierde lo importante.
+11. **Todo lo que se guarda en disco va dentro de un try.** Una falla al
+    guardar no puede tirar abajo una corrida ya terminada.
+12. **En las pruebas que miran el código fuente, sacá los comentarios antes
+    de buscar:** los comentarios contienen el texto viejo a propósito.
