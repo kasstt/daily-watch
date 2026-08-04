@@ -12,9 +12,14 @@ on:
 permissions:
   contents: write
 
+# OJO: esto tiene que quedar en true.  Antes estaba en false y era la causa
+# de que despues de actualizar el bot siguiera contestando la version vieja:
+# el turno nuevo quedaba esperando en la fila hasta 5 horas y media mientras
+# el turno viejo seguia corriendo el codigo viejo.  En true, subir un cambio
+# corta el turno viejo y arranca el nuevo en el momento.
 concurrency:
   group: watch
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   mirar:
@@ -45,6 +50,9 @@ jobs:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT: ${{ secrets.TG_CHAT }}
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          GH_RAMA: ${{ github.ref_name }}
+          CLAVE_COMPARTIR: ${{ secrets.CLAVE_COMPARTIR }}
           GIST_ID: ${{ secrets.GIST_ID }}
           IA_KEY: ${{ secrets.IA_KEY }}
         run: python watcher.py
