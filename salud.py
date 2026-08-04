@@ -25,6 +25,19 @@ import os
 
 import requests
 
+try:                                  # el reloj de GitHub anda en otro huso
+    from zoneinfo import ZoneInfo
+    import fuentes as _CFG
+    _ZONA = ZoneInfo(_CFG.ZONA_HORARIA)
+except Exception:                     # sin husos instalados, mejor algo que nada
+    _ZONA = None
+
+
+def _ahora():
+    """La hora de tu ciudad.  La maquina de GitHub vive varias horas adelante,
+    asi que contar dias con SU reloj adelantaba o atrasaba el aviso un dia."""
+    return dt.datetime.now(_ZONA) if _ZONA else dt.datetime.now()
+
 API = "https://api.github.com"
 ARCHIVO_LATIDO = "estado/latido.txt"
 
@@ -101,7 +114,7 @@ def hay_que_avisar(dias, avisado_en="", hoy=None, aviso=50, repetir=7):
         ultimo = dt.datetime.strptime(str(avisado_en)[:10], "%Y-%m-%d").date()
     except Exception:
         return True
-    hoy_dia = (hoy or dt.datetime.now()).date()
+    hoy_dia = (hoy or _ahora()).date()
     return (hoy_dia - ultimo).days >= repetir
 
 
@@ -187,7 +200,7 @@ def tocar(nombre_repo=None, rama=None, espera=25):
     cuerpo = {
         "message": "latido",
         "content": base64.b64encode(
-            ("sigo vivo %s\n" % dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+            ("sigo vivo %s\n" % _ahora().strftime("%Y-%m-%d %H:%M")
              ).encode("utf-8")).decode("ascii"),
         "branch": rama,
     }
