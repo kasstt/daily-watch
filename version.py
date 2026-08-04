@@ -7,11 +7,56 @@ mensaje NO se borra.  Ademas lo podes ver cuando quieras en
 Ajustes -> Version y novedades, o escribiendo /version.
 """
 
-VERSION = "5.7"
-FECHA = "04-08-2026 19:30"
-TITULO = "la auditoria: revise el bot completo y arregle 15 fallas"
+VERSION = "5.8"
+FECHA = "04-08-2026 22:10"
+TITULO = "segunda revision: el recordatorio de entregas volvio a funcionar"
 
 CAMBIOS = [
+    "LO MAS IMPORTANTE: los recordatorios de las entregas NO te estaban "
+    "llegando. Ni uno. Cada vez que el bot revisaba tus ramos se tropezaba "
+    "justo en esa parte y se quedaba callado, y de paso se saltaba el resumen, "
+    "el aviso de 'no lo viste' y la vigilancia de su propio reloj. Te podias "
+    "perder una entrega y el bot nunca te iba a avisar. Ya funciona.",
+    "Si el mensaje no sale, el bot ya no lo da por mandado. Antes, cuando la "
+    "mensajeria fallaba un segundo, el aviso se anotaba como enviado igual y "
+    "nunca te llegaba: ni ese ni ninguna repeticion. Ahora lo reintenta en la "
+    "revision siguiente. Pasaba con los avisos del profe, las clases por "
+    "videoconferencia, los recordatorios y los 'no lo viste'.",
+    "El boton '+1 hora' de las tarjetas no hacia nada: te tapaba el aviso con "
+    "el panel y el recordatorio seguia igual. Ya posterga de verdad.",
+    "Los botones de un mensaje viejo ahora te contestan que son viejos, en vez "
+    "de dibujarte el panel encima del mensaje que estabas mirando.",
+    "Si le pediste dos cosas seguidas y le quedaron dos preguntas sin "
+    "contestar, apretar 'Dale' en la vieja hacia lo NUEVO. Ahora cada boton "
+    "sabe de que pedido era y te lo dice si ya no corresponde.",
+    "Un nombre de ramo o un titulo con signos raros (menor que, comillas, "
+    "un ampersand) rompia el mensaje entero: no llegaba nada. Ahora se "
+    "muestra tal cual lo escribio el profe.",
+    "Un aviso que hablaba de 'tomate una foto' o de 'tomar asistencia' te "
+    "sonaba como urgencia de madrugada, porque buscaba las palabras adentro "
+    "de otras palabras. Ahora solo te despierta lo que te cambia el dia.",
+    "Una clase que el bot adivinaba por las palabras del profe (sin enlace) "
+    "te despertaba de madrugada igual que una clase de verdad. Ahora esa "
+    "llega sin sonido; la que tiene enlace sigue sonando siempre.",
+    "Cuando la mensajeria le pide al bot que espere, ahora espera y reintenta "
+    "en vez de perder el aviso. Si detecta muchas cosas de golpe, no se le "
+    "cae ninguna.",
+    "Si algo no entra en un solo mensaje, ahora te avisa que le cortaste el "
+    "final, en vez de mandarlo cortado como si estuviera completo.",
+    "La memoria del bot ya no crece para siempre: se olvida sola de lo de "
+    "hace mas de un ano y de los pendientes cerrados mas viejos. Sin eso, un "
+    "dia dejaba de poder guardar y volvia a avisarte cosas viejas.",
+    "La memoria se guarda de un solo golpe: si la corrida se corta en el "
+    "peor momento, ya no queda partida al medio ni arranca en blanco.",
+    "Y si aun asi se queda sin memoria, te lo dice en palabras simples. Un "
+    "bot callado se parece demasiado a un bot sin noticias.",
+    "El reloj automatico ya no corta la revision que esta trabajando. Antes "
+    "podia matarla justo despues de avisarte y antes de anotarlo, y el mismo "
+    "aviso te llegaba dos veces.",
+    "Las fechas de lo compartido y del control del reloj ahora usan la hora "
+    "de tu ciudad. Antes usaban la de la maquina, varias horas adelantada: "
+    "lo de las 9 de la noche quedaba fechado al dia siguiente.",
+
     "Revise el bot COMPLETO, linea por linea, no solo lo nuevo de la 5.6.",
     "Los mensajes largos ya no se perdian en silencio. Si un mensaje se "
     "pasaba de largo, se cortaba a lo bruto y podia quedar partido al medio "
