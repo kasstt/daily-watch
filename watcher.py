@@ -806,7 +806,53 @@ class Vigilante(object):
 
     # ---------------------------------------------------------- guardar
     def guardar(self):
+        antes = self.modo
         self.modo = almacen.guardar(self.estado, self.modo)
+        self._avisar_memoria(antes)
+
+    def _avisar_memoria(self, antes):
+        """Quedarse sin memoria es la falla mas cara de este bot: si no puede
+        anotar lo que ya te mando, te lo repite o lo pierde.  Y callarse no es
+        opcion, porque un bot mudo se parece demasiado a un bot sin noticias.
+        Se avisa una vez cada doce horas para no convertirlo en ruido."""
+        perdida = self.modo == "nada"
+        respaldo = self.modo == "repo" and antes == "gist"
+        ilegible = almacen.memoria_rota()
+        if not perdida and not respaldo and not ilegible:
+            return
+
+        cuando = time.time()
+        ultimo = 0.0
+        try:
+            ultimo = float(self.estado.get("aviso_memoria") or 0)
+        except (TypeError, ValueError):
+            ultimo = 0.0
+        if cuando - ultimo < 12 * 3600:
+            return
+        self.estado["aviso_memoria"] = cuando
+
+        if perdida:
+            texto = ("\u26A0\uFE0F <b>No pude guardar lo que revis\u00e9</b>\n"
+                     "Sigo mirando tus ramos y te voy a avisar igual, pero por "
+                     "ahora no logro anotar lo que ya te mand\u00e9, as\u00ed que "
+                     "puede que te repita alg\u00fan aviso.\n"
+                     "Si esto sigue ma\u00f1ana, conviene revisar la conexi\u00f3n "
+                     "del bot.")
+        elif respaldo:
+            texto = ("\u26A0\uFE0F <b>Estoy usando mi copia de respaldo</b>\n"
+                     "Mi memoria de siempre no me responde, as\u00ed que anoto "
+                     "todo en la copia. Vas a seguir recibiendo los avisos "
+                     "igual; te lo digo para que sepas por qu\u00e9 podr\u00eda "
+                     "repetirse alguno.")
+        else:
+            texto = ("\u26A0\uFE0F <b>Arranqu\u00e9 sin recordar lo anterior</b>\n"
+                     "No pude leer lo que ten\u00eda anotado, as\u00ed que empec\u00e9 "
+                     "la cuenta de nuevo. Puede que te avise cosas que ya "
+                     "hab\u00edas visto durante el pr\u00f3ximo d\u00eda.")
+        try:
+            N.enviar(texto)
+        except Exception as e:
+            log("[!] no pude avisar el problema de memoria: %s" % e)
 
     # ---------------------------------------------------------- ayudas
     def cfg(self):
@@ -1432,9 +1478,13 @@ class Vigilante(object):
     def _pedir_confirmacion(self, plan, aviso, cerrar=None):
         """Guarda el plan y muestra los dos botones.  El texto ya viene armado
         por el programa: la IA nunca escribe una confirmacion."""
-        self.estado["propuesta"] = {"plan": plan, "cuando": time.time()}
+        # Cada propuesta lleva su propia marca. Sin esto, si te propongo dos
+        # cosas seguidas, el boton Dale de la PRIMERA ejecutaba el plan de la
+        # segunda: el boton hacia algo distinto de lo que decia arriba.
+        marca = self.nueva_marca_de_propuesta(plan)
         self.guardar()
-        botones = N.teclado([[("\u2705 Dale", "prop:si"), ("\u274C No", "prop:no")]])
+        botones = N.teclado([[("\u2705 Dale", "prop:si:" + marca),
+                              ("\u274C No", "prop:no:" + marca)]])
         if cerrar:
             cerrar(aviso, botones)
         else:
@@ -1488,11 +1538,32 @@ class Vigilante(object):
             return
         self._pedir_confirmacion(plan, aviso, cerrar=cerrar)
 
-    def confirmar_propuesta(self, si=True):
+    def nueva_marca_de_propuesta(self, plan):
+        """Guarda la propuesta y devuelve su marca, para que el boton apunte
+        exactamente a ESTA y no a la que venga despues."""
+        # Un numero que sube de a uno, no la hora: dos pedidos seguidos en el
+        # mismo instante llegaban a tener la MISMA marca, y ahi el boton viejo
+        # volvia a ejecutar el pedido nuevo, que es justo lo que se quiere
+        # evitar.
+        n = int(self.estado.get("propuesta_n") or 0) + 1
+        self.estado["propuesta_n"] = n % 100000000
+        marca = "%d" % n
+        self.estado["propuesta"] = {"plan": plan, "cuando": time.time(),
+                                    "id": marca}
+        return marca
+
+    def confirmar_propuesta(self, si=True, marca=""):
         """El boton de la confirmacion. Devuelve el texto final."""
-        p = self.estado.pop("propuesta", None)
+        p = self.estado.get("propuesta")
         if not p or time.time() - float(p.get("cuando", 0)) > 1800:
+            self.estado.pop("propuesta", None)
             return "Esa propuesta ya venci\u00f3. Ped\u00edmelo de nuevo."
+        guardada = str(p.get("id") or "")
+        if marca and guardada and str(marca) != guardada:
+            return ("Ese bot\u00f3n era de un pedido anterior. Despu\u00e9s me "
+                    "pediste otra cosa, as\u00ed que no toqu\u00e9 nada: "
+                    "ped\u00edmelo de nuevo.")
+        self.estado.pop("propuesta", None)
         if not si:
             self.guardar()
             return "\u274C Listo, no hice nada."
@@ -1771,16 +1842,16 @@ class Vigilante(object):
             return
 
         if not confirmado and len(elegidos) >= getattr(CFG, "PREGUNTAR_DESDE", 6):
-            self.estado["propuesta"] = {
-                "plan": {"accion": "mandar_archivos", "clave": clave,
-                         "alcance": alcance or "", "desde": desde or "",
-                         "hasta": hasta or "", "nombre": nombre or "",
-                         "tipo": tipo or "todo"},
-                "cuando": time.time()}
+            marca = self.nueva_marca_de_propuesta(
+                {"accion": "mandar_archivos", "clave": clave,
+                 "alcance": alcance or "", "desde": desde or "",
+                 "hasta": hasta or "", "nombre": nombre or "",
+                 "tipo": tipo or "todo"})
             self.guardar()
             N.enviar(self.texto_confirmar_archivos(clave, elegidos, rango),
-                     botones=N.teclado([[("\U0001F4E5 Mandalos", "prop:si"),
-                                         ("\u274C No", "prop:no")]]))
+                     botones=N.teclado([
+                         [("\U0001F4E5 Mandalos", "prop:si:" + marca),
+                          ("\u274C No", "prop:no:" + marca)]]))
             return
 
         self.mandar_archivos(clave, elegidos, rango)
@@ -1917,9 +1988,12 @@ class Vigilante(object):
                 sello = "%s \u00b7 %s" % (fecha_linda(f), cuando)
             else:
                 sello = "sin fecha"
+            # El nombre del ramo tambien se escapa: un ramo con un < o un &
+            # en el nombre rompia el formato del mensaje entero.
             linea = "\U0001F4CC <b>%s</b>\n<i>%s%s</i>" % (
                 N.escapar(t["titulo"]),
-                (t.get("grupo", "") + " \u00b7 ") if t.get("grupo") else "", sello)
+                (N.escapar(t.get("grupo", "")) + " \u00b7 ")
+                if t.get("grupo") else "", sello)
             if t.get("nota"):
                 linea += "\n\U0001F4DD %s" % N.escapar(t["nota"])
             filas.append(linea)
@@ -1967,12 +2041,12 @@ class Vigilante(object):
             # {'veces': 3, 'desde': ...}, y se leia como un error del programa.
             if isinstance(ficha_falla, dict):
                 lineas.append("\u26A0\uFE0F %s \u00b7 %s \u00b7 desde %s" % (
-                    self.nombre_de(clave),
-                    ficha_falla.get("motivo", "no pude leerlo"),
-                    ficha_falla.get("desde", "hace rato")))
+                    N.escapar(self.nombre_de(clave)),
+                    N.escapar(ficha_falla.get("motivo", "no pude leerlo")),
+                    N.escapar(ficha_falla.get("desde", "hace rato"))))
             else:
                 lineas.append("\u26A0\uFE0F %s desde %s" % (
-                    self.nombre_de(clave), ficha_falla))
+                    N.escapar(self.nombre_de(clave)), N.escapar(ficha_falla)))
         return "\n".join(lineas) + self.texto_silenciados("\n\n")
 
     def texto_version(self):
@@ -2409,8 +2483,14 @@ class Vigilante(object):
             mid = N.enviar(texto, silencioso=callado,
                            botones=self.botones_tarjeta(idt, clave,
                                                         es_tarea=False))
-            if mid:
-                self.estado["tareas"][idt]["mensaje_id"] = mid
+            if not mid:
+                # No salio: saco el pendiente que acababa de crear y NO lo
+                # marco como visto, asi se reintenta en la revision que viene.
+                # Un aviso de suspension perdido no se recupera despues.
+                self.estado.get("tareas", {}).pop(idt, None)
+                log("[!] no pude mandar un aviso del profe, lo reintento")
+                continue
+            self.estado["tareas"][idt]["mensaje_id"] = mid
 
             # Recien DESPUES de mandarlo lo anoto como visto. Al reves, si el
             # mensaje no sale, el aviso se pierde para siempre.
@@ -2629,10 +2709,34 @@ class Vigilante(object):
         mid = N.enviar(texto, silencioso=self.en_silencio(),
                        botones=self.botones_tarjeta(
                            tarea_id, clave, False, principal["tipo"] == "tarea"))
+        if not mid:
+            # El aviso no salio. Si dejara todo marcado como visto, esta
+            # novedad no se reintentaria NUNCA: el usuario no se enteraria y
+            # el silencio quedaria igual que "no hay noticias". Saco las
+            # marcas y se vuelve a intentar en la revision siguiente.
+            self._desmarcar(clave, frescos)
+            log("[!] no pude avisar %d cosas de %s, lo reintento"
+                % (len(frescos), nombre))
+            return
         # Guardo el id: asi puedo redibujar la tarjeta despues, por ejemplo
         # cuando me mandas una nota desde el teclado.
         self.estado["tareas"][tarea_id]["mensaje_id"] = mid
         self.mandar_adjuntos(s, [principal] + adjuntos, mid)
+
+    def _desmarcar(self, clave, frescos):
+        """Deshace las marcas de "esto ya lo vi" cuando el aviso no salio.
+
+        Es la contracara de "mando primero, marco despues": sin esto, un rato
+        de mensajeria caida se come novedades para siempre.
+        """
+        items = self.estado.setdefault("items", {})
+        novedades = self.estado.setdefault("novedades", [])
+        for it in frescos:
+            items.pop(huella("item", clave, it["url"], pelado(it["titulo"])), None)
+            for i, n in enumerate(novedades):
+                if n.get("c") == clave and n.get("u") == it["url"]:
+                    del novedades[i]
+                    break
 
     # ------------------------------------------------------- adjuntos
     def mandar_adjuntos(self, sesion, items, responde_a=None):
@@ -2714,9 +2818,17 @@ class Vigilante(object):
                 hitos = perfil
 
             for h in hitos:
-                if faltan <= h and str(h) not in avisos.setdefault(idt, []):
-                    avisos[idt].append(str(h))
-                    self._avisar_plazo(idt, t, f, faltan)
+                # La lista de hitos ya avisados es ya_avisados. Aca decia
+                # avisos.setdefault(), que es el MODULO de avisos del profe:
+                # la vuelta entera se cortaba en este punto en cada revision,
+                # asi que nunca llegaba un recordatorio de entrega y ademas se
+                # dejaban de hacer el resumen, el latido y el reloj. Todo
+                # callado, porque mas arriba hay un except que se lo tragaba.
+                if faltan <= h and str(h) not in ya_avisados.setdefault(idt, []):
+                    # Mando primero y marco despues: si el mensaje no sale, el
+                    # hito se vuelve a intentar en la revision siguiente.
+                    if self._avisar_plazo(idt, t, f, faltan):
+                        ya_avisados[idt].append(str(h))
                     break
 
     def _avisar_plazo(self, idt, t, f, faltan):
@@ -2739,7 +2851,10 @@ class Vigilante(object):
         texto = "\n".join(lineas)
         t["tarjeta"] = texto
         # Un plazo suena aunque sea de madrugada y aunque el ramo este callado.
-        N.enviar(texto, botones=self.botones_tarjeta(idt, t.get("clave", "")))
+        # Devuelve si el mensaje SALIO, porque de eso depende que el hito se
+        # marque o se reintente.
+        return bool(N.enviar(
+            texto, botones=self.botones_tarjeta(idt, t.get("clave", ""))))
 
     # =================================================================
     #  resumen periodico y latido
@@ -2762,7 +2877,6 @@ class Vigilante(object):
             nacio = leer_fecha(t.get("nacio"))
             if not nacio or (hoy - nacio).total_seconds() < horas * 3600:
                 continue
-            t["recordado"] = True
             pendientes.append(t)
         if not pendientes:
             return
@@ -2774,8 +2888,13 @@ class Vigilante(object):
             filas.append("<i>y %d cosas m\u00e1s</i>" % (len(pendientes) - 8))
         filas.append("")
         filas.append("<i>Est\u00e1n en Pendientes hasta que las marques.</i>")
-        N.enviar("\n".join(filas), botones=N.teclado([[
-            ("\U0001F4CC Pendientes", "p:pen"), ("\U0001F431 Panel", "p:raiz")]]))
+        if not N.enviar("\n".join(filas), botones=N.teclado([[
+                ("\U0001F4CC Pendientes", "p:pen"),
+                ("\U0001F431 Panel", "p:raiz")]])):
+            return          # no salio: no marco nada y se reintenta
+        # Marco DESPUES de mandar, asi el empujoncito no se pierde callado.
+        for t in pendientes:
+            t["recordado"] = True
 
     def _toca_ahora(self, dia, hora, ultimo_guardado):
         hoy = ahora()
@@ -2840,7 +2959,6 @@ class Vigilante(object):
             marca = huella("clase", clave, ficha.get("enlace") or url, pelado(titulo))
             if marca in avisadas:
                 continue
-            avisadas[marca] = hoy.strftime("%Y-%m-%d %H:%M")
 
             cuando = fecha_en_texto(" ".join([titulo, descripcion]), hoy)
             lineas = clases.lineas_del_aviso(
@@ -2850,13 +2968,25 @@ class Vigilante(object):
             if not ficha.get("enlaces") and url:
                 lineas.append("\U0001F517 " + N.enlace("Abrir en la plataforma", url))
 
-            silencioso = (self.en_silencio()
-                          and not getattr(CFG, "CLASES_SUENAN_DE_NOCHE", True))
+            # Solo rompe el silencio de la madrugada una clase SEGURA, o sea
+            # con enlace de sala de verdad. Cuando la detecte por palabras
+            # puede ser el profe hablando de la clase que ya paso, y eso no
+            # justifica despertarte: una alarma que suena de gusto se apaga, y
+            # el dia que hay una clase online de verdad no te enteras.
+            segura = clases.prioritaria(ficha)
+            silencioso = self.en_silencio() and not (
+                segura and getattr(CFG, "CLASES_SUENAN_DE_NOCHE", True))
             try:
-                N.enviar("\n".join(lineas), silencioso=silencioso)
+                mid = N.enviar("\n".join(lineas), silencioso=silencioso)
             except Exception as e:
                 log("[!] no pude avisar la clase:", type(e).__name__)
                 continue
+            if not mid:
+                log("[!] la clase no se pudo avisar, lo reintento")
+                continue
+            # Recien ahora queda marcada. Al reves, un mensaje que no sale
+            # dejaba la clase como avisada y no llegaba nunca.
+            avisadas[marca] = hoy.strftime("%Y-%m-%d %H:%M")
             cuantas += 1
             log("[i] clase por video en %s (%s)" % (nombre, ficha.get("sala")))
 
@@ -3126,10 +3256,41 @@ class Vigilante(object):
                 t["hecho"] = True
                 self.redibujar_tarjeta(idt)
 
+    def podar_memoria(self):
+        """La memoria no puede crecer para siempre.
+
+        Dos listas no tenian ningun tope: las huellas de todo lo visto y los
+        pendientes ya cerrados. En un semestre la memoria se hace enorme, y
+        cuando el gist no la puede guardar el bot se queda sin memoria.
+
+        Las huellas se podan solo cuando son MUY viejas (mas de un ano), asi
+        no se puede dar el caso de borrar la huella de algo que todavia esta
+        publicado y volver a avisarlo como nuevo.
+        """
+        dias = int(getattr(CFG, "DIAS_PARA_PODAR_HUELLAS", 400) or 0)
+        hoy = ahora()
+        if dias:
+            items = self.estado.get("items", {})
+            corte = (hoy - dt.timedelta(days=dias)).strftime("%Y-%m-%d")
+            for marca in [k for k, f in items.items()
+                          if isinstance(f, str) and f and f[:10] < corte]:
+                items.pop(marca, None)
+
+        tope = int(getattr(CFG, "PENDIENTES_CERRADOS_GUARDADOS", 300) or 0)
+        if tope:
+            tareas = self.estado.get("tareas", {})
+            hechas = [(str(t.get("nacio") or t.get("vence") or ""), k)
+                      for k, t in tareas.items() if t.get("hecho")]
+            if len(hechas) > tope:
+                hechas.sort()
+                for _f, k in hechas[:len(hechas) - tope]:
+                    tareas.pop(k, None)
+
     def una_vuelta(self):
         self.revisar_todo()
         self.procesar_agenda()
         self.avisos_de_plazo()
+        self.podar_memoria()
         self.olvidar_recordatorios_viejos()
         self.recordar_sin_ver()
         self.resumen_periodico()
