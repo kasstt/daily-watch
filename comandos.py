@@ -33,6 +33,8 @@ MENU = [
     ("callar", "silenciar un ramo"),
     ("revisar", "mir\u00e1 ahora"),
     ("recordar", "guardame un apunte"),
+    ("avisos", "lo que escribieron los profes"),
+    ("deshacer", "volver atr\u00e1s lo \u00faltimo"),
     ("clases", "clases por videoconferencia"),
     ("compartir", "con qui\u00e9n comparto y qu\u00e9"),
     ("afuera", "material de otras secciones"),
@@ -305,19 +307,57 @@ def _callar(estado, resto, acc, ahora):
 
 
 def _recordar(estado, resto, ahora):
+    """/recordar <cuando> <que>
+
+    Tres cosas estaban mal aca y por eso parecia que el comando no andaba:
+    1. El id era "mio_<minuto>", asi que dos recordatorios del mismo minuto
+       se pisaban y uno desaparecia sin decir nada.
+    2. No se marcaba "es_tarea": False, asi que tus apuntes aparecian en
+       Pendientes bajo "PARA ENTREGAR", como si fueran entregas del ramo.
+    3. Nadie guardaba la memoria, asi que si el proceso se cortaba antes de
+       la proxima guardada, el recordatorio se perdia.
+    """
+    if not (resto or "").strip():
+        return ("\u23F0 <b>C\u00f3mo se usa</b>\n"
+                "/recordar viernes 18:00 estudiar\n"
+                "/recordar 3h mandar el informe\n"
+                "/recordar manana 9:00 comprar el cuaderno\n\n"
+                "Tambi\u00e9n vale sin comando: <i>recordame el lunes 8:00 "
+                "la prueba</i>\n"
+                "O sin escribir nada: abr\u00ed el panel y toc\u00e1 "
+                "<b>Nuevo recordatorio</b>.")
     fecha, texto = cuando(resto, ahora)
     if not fecha:
-        return ("Decime cu\u00e1ndo. Por ejemplo:\n/recordar viernes 18:00 estudiar\n"
-                "/recordar 3h mandar el informe")
+        return ("No le encontr\u00e9 la fecha a eso.\nProb\u00e1 as\u00ed:\n"
+                "/recordar viernes 18:00 estudiar\n"
+                "/recordar 3h mandar el informe\n"
+                "/recordar 20 min sacar la ropa")
     if not texto.strip():
-        return "Y qu\u00e9 te recuerdo?"
-    idt = "mio_%d" % int(fecha.timestamp())
-    estado.setdefault("tareas", {})[idt] = {
+        return ("Tengo la fecha (%s) pero no qu\u00e9 recordarte.\n"
+                "Escribilo despu\u00e9s de la hora, por ejemplo:\n"
+                "/recordar %s estudiar c\u00e1lculo"
+                % (fecha.strftime("%d/%m %H:%M"), fecha.strftime("%H:%M")))
+
+    tareas = estado.setdefault("tareas", {})
+    # El id lleva los segundos y, si igual choca, se corre uno por uno.
+    marca = fecha
+    idt = "mio_%d" % int(marca.timestamp())
+    while idt in tareas:
+        marca = marca + dt.timedelta(seconds=1)
+        idt = "mio_%d" % int(marca.timestamp())
+
+    tareas[idt] = {
         "grupo": "", "clave": "", "titulo": texto.strip(), "url": "",
         "vence": fecha.strftime("%Y-%m-%d %H:%M"), "hecho": False,
-        "nota": "", "mio": True}
-    return "Anotado: <b>%s</b>\nTe aviso el %s a las %s." % (
-        N.escapar(texto.strip()), fecha.strftime("%d/%m"), fecha.strftime("%H:%M"))
+        "nota": "", "mio": True,
+        # Esto es TUYO, no una entrega del ramo. Sin esta linea caia en
+        # "PARA ENTREGAR" y se mezclaba con las tareas de la facultad.
+        "es_tarea": False}
+    return ("\u23F0 Anotado: <b>%s</b>\nTe aviso el %s a las %s.\n"
+            "<i>Lo pod\u00e9s abrir, anotarle algo o borrarlo desde "
+            "Pendientes.</i>"
+            % (N.escapar(texto.strip()), fecha.strftime("%d/%m"),
+               fecha.strftime("%H:%M")))
 
 
 def _compartir(estado, resto, acc):
@@ -431,6 +471,11 @@ def _boton_de_tarjeta(estado, dato, acc, ahora):
     if accion == "hecho":
         if not t:
             return "Ya no la tengo", None
+        # Guardo como estaba ANTES de tocarla, asi se puede deshacer.
+        import panel as P
+        P._guardar_deshacer(estado, "listo", cual, dict(t),
+                            "marqu\u00e9 %s" % str(t.get("titulo", ""))[:20],
+                            "p:pen")
         t["hecho"] = not t.get("hecho")
         return ("Marcada como hecha" if t["hecho"] else "Vuelve a pendientes"), cual
 
@@ -449,6 +494,24 @@ def _boton_de_tarjeta(estado, dato, acc, ahora):
             t["dormida_hasta"] = nueva.strftime("%Y-%m-%d %H:%M")
         return "Te la recuerdo en %d hora%s" % (horas, "" if horas == 1 else "s"), cual
 
+    if accion == "basta":
+        # Este es el boton mas facil de apretar sin querer de todo el bot:
+        # esta al lado de "hecho" y callaba el ramo DOS SEMANAS de un toque,
+        # sin preguntar, sin decir hasta cuando y sin forma de volver atras.
+        import panel as P
+        callados = estado.setdefault("callados", {})
+        antes = dict(callados.get(cual) or {})
+        hasta = ahora + dt.timedelta(days=CFG.DIAS_CALLADO)
+        callados[cual] = {"hasta": hasta.strftime("%Y-%m-%d"), "cuenta": 0}
+        P._guardar_deshacer(estado, "callar", cual, antes,
+                            "silenci\u00e9 el ramo", "p:raiz")
+        efimero(estado,
+                "\U0001F515 Silenci\u00e9 ese ramo hasta el <b>%s</b>.\n"
+                "Los plazos y los avisos del profe te siguen llegando igual.\n"
+                "Si fue sin querer, escrib\u00ed /deshacer."
+                % hasta.strftime("%d/%m"))
+        return "Silenciado %d d\u00edas" % CFG.DIAS_CALLADO, None
+
     if accion == "nota":
         if not t:
             return "Ya no la tengo", None
@@ -457,12 +520,6 @@ def _boton_de_tarjeta(estado, dato, acc, ahora):
             estado, "\U0001F4DD Escribime la nota para <b>%s</b>."
                     % N.escapar(t["titulo"]))
         return "Mandame la nota", None
-
-    if accion == "basta":
-        hasta = ahora + dt.timedelta(days=CFG.DIAS_CALLADO)
-        estado.setdefault("callados", {})[cual] = {
-            "hasta": hasta.strftime("%Y-%m-%d"), "cuenta": 0}
-        return "Silenciado %d d\u00edas" % CFG.DIAS_CALLADO, None
 
     return "", None
 
@@ -542,17 +599,24 @@ def atender(estado, acc, ahora, espera=0):
                     % (N.escapar(t["titulo"]), N.escapar(t["nota"])))
             continue
 
-        # la botonera fija
+        # La botonera fija.
+        #
+        # OJO: esto tiene que ser el texto EXACTO del boton, no "la palabra
+        # aparece en alguna parte".  Antes era `if "pendientes" in plano`, asi
+        # que cualquier frase que contuviera la palabra --por ejemplo
+        # "que pendientes tengo?"-- se trataba como si hubieras apretado el
+        # boton: te tiraba la lista pelada y nunca llegaba a proponer() ni a
+        # la IA.  O sea que no se le podia hablar normal al bot.
         plano = pelado(texto)
-        if "novedades" in plano and not texto.startswith("/"):
+        if plano in ("novedades", "nuevo") and not texto.startswith("/"):
             borrar_ya(estado, mi_mensaje)
             informativo(estado, acc["texto_novedades"]())
             continue
-        if "pendientes" in plano and not texto.startswith("/"):
+        if plano in ("pendientes", "pendiente") and not texto.startswith("/"):
             borrar_ya(estado, mi_mensaje)
             informativo(estado, acc["texto_pendientes"]())
             continue
-        if "panel" in plano and not texto.startswith("/"):
+        if plano in ("panel", "menu") and not texto.startswith("/"):
             borrar_ya(estado, mi_mensaje)
             acc["abrir_panel"]()
             continue
@@ -582,11 +646,18 @@ def atender(estado, acc, ahora, espera=0):
             except Exception:
                 f = None
             if f:
-                idt = "mio_%d" % int(f.timestamp())
-                estado.setdefault("tareas", {})[idt] = {
+                tareas = estado.setdefault("tareas", {})
+                # Mismo cuidado que en /recordar: dos apuntes del mismo minuto
+                # se pisaban y uno desaparecia sin avisar.
+                marca = f
+                idt = "mio_%d" % int(marca.timestamp())
+                while idt in tareas:
+                    marca = marca + dt.timedelta(seconds=1)
+                    idt = "mio_%d" % int(marca.timestamp())
+                tareas[idt] = {
                     "grupo": "", "clave": "", "titulo": texto.strip()[:200], "url": "",
                     "vence": f.strftime("%Y-%m-%d %H:%M"), "hecho": False,
-                    "nota": "", "mio": True}
+                    "nota": "", "mio": True, "es_tarea": False}
                 borrar_ya(estado, m.get("message_id"))
                 acc["dibujar_panel"]("p:rec", None)
                 continue
@@ -620,7 +691,8 @@ def atender(estado, acc, ahora, espera=0):
 
         info = cmd in ("clases", "clase", "video", "videoconferencia",
                        "afuera", "otras", "secciones",
-                       "ayuda", "help", "ultimo", "pendientes", "semana", "estado",
+                       "avisos", "aviso", "tablon", "anuncios",
+                       "ayuda", "help", "ultimo", "semana", "estado",
                        "perfil", "perfiles", "version", "actualizacion")
 
         if cmd in ("start", "panel", "menu"):
@@ -656,7 +728,18 @@ def atender(estado, acc, ahora, espera=0):
         elif cmd == "ultimo":
             r = acc["texto_novedades"]()
         elif cmd == "pendientes":
-            r = acc["texto_pendientes"]()
+            # Ahora abre la pantalla con botones, no un texto muerto.
+            acc["abrir_panel"]()
+            acc["dibujar_panel"]("p:pen", None)
+        elif cmd in ("avisos", "aviso", "tablon", "anuncios"):
+            r = acc["texto_avisos"]() if acc.get("texto_avisos") else None
+        elif cmd in ("deshacer", "undo", "atras"):
+            # Antes esto tiraba la pantalla que devuelve _deshacer, asi que el
+            # panel seguia mostrando lo de antes y parecia que el deshacer no
+            # habia hecho nada.
+            r, donde = P._deshacer(estado)
+            if donde and acc.get("dibujar_panel"):
+                acc["dibujar_panel"](donde, None)
         elif cmd == "semana":
             r = acc["texto_semana"]()
         elif cmd == "pausa":
@@ -738,4 +821,12 @@ def sacar_basura(estado):
             N.borrar(mid)
         else:
             quedan.append([mid, cuando_])
-    estado["basura"] = quedan[-60:]
+    # Si la cola crecio de mas, los que sobran se BORRAN del chat antes de
+    # sacarlos de la lista. Antes se tiraban de la lista sin borrarlos, asi
+    # que esos mensajes se quedaban en el chat para siempre y nadie los
+    # limpiaba nunca.
+    if len(quedan) > 60:
+        for mid, _c in quedan[:-60]:
+            N.borrar(mid)
+        quedan = quedan[-60:]
+    estado["basura"] = quedan
