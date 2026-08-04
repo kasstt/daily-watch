@@ -48,6 +48,13 @@ def vacio():
         "ultimo_resumen": "",
         "ultimo_latido": "",
         "fallas_ia": 0,
+        # --- v5.6 ---
+        # Los avisos escritos del profesor que ya te mande, por huella.
+        # Esto TIENE que sobrevivir al recorte: si se pierde, el bot te vuelve
+        # a mandar de golpe todos los avisos viejos de todos los ramos.
+        "avisos_vistos": {},
+        "version_desde": "",   # cuando entro la version que esta corriendo
+        "deshacer": None,      # la ultima accion a la que se puede dar marcha atras
         # --- v5.5 ---
         "personas": {},        # id -> {alias, chat, ramos, bloqueada, ...}
         "de_afuera": [],       # material de otras secciones, ya filtrado
@@ -84,6 +91,10 @@ def reducir(e):
         "archivados": e.get("archivados", {}),
         "tg_offset": e.get("tg_offset", 0),
         "clases_avisadas": e.get("clases_avisadas", {}),
+        # Sin esto, perder el gist te trae todos los avisos viejos de golpe.
+        "avisos_vistos": e.get("avisos_vistos", {}),
+        "version_avisada": e.get("version_avisada", ""),
+        "version_desde": e.get("version_desde", ""),
         "repo_movido": e.get("repo_movido", ""),
         "repo_aviso": e.get("repo_aviso", ""),
         "nota": "memoria reducida: el resto vive en el gist privado",
@@ -198,5 +209,12 @@ def guardar(estado, modo):
             return "gist"
         except Exception as e:
             print("[!] no pude escribir el gist (%s), guardo reducido" % e)
-    _escribir_local(reducir(estado) if modo == "gist" else estado)
+    # Esto estaba fuera de todo try. Un disco lleno o un permiso mal puesto
+    # reventaba la corrida ENTERA justo al final, cuando ya estaba todo el
+    # trabajo hecho. Ahora avisa y devuelve "nada", pero no se lleva la vuelta.
+    try:
+        _escribir_local(reducir(estado) if modo == "gist" else estado)
+    except Exception as e:
+        print("[!] no pude guardar en el disco (%s)" % type(e).__name__)
+        return "nada"
     return "repo"
