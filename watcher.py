@@ -29,6 +29,7 @@ except Exception:
     pass
 
 import almacen
+import avisos
 import clases
 import comandos
 import compartir
@@ -360,8 +361,27 @@ def _descripcion_cerca(a):
 # Sirve para el ultimo seguro: si la pagina cambio pero no supe decir en
 # que, igual te aviso.  Le saco relojes, numeros largos y fichas de sesion
 # para que no cambie sola cada vez que se carga.
+# Esta lista quedo corta y era la causa de los avisos de "cambio algo y no
+# se que" cuando en la pagina no habia cambiado nada: alcanzaba con un
+# "hace 2 horas" o un contador de visitas para que la firma diera distinta
+# en cada revision.  Todo lo que se mueve solo tiene que estar aca.
 RE_VOLATIL = re.compile(
-    r"\d{1,2}:\d{2}(:\d{2})?|\d{6,}|sesskey|csrf|token|jsessionid", re.I)
+    # relojes
+    r"\d{1,2}:\d{2}(:\d{2})?"
+    # numeros largos, identificadores y fichas de sesion
+    r"|\d{5,}|sesskey|csrf|token|jsessionid|nonce|utm_[a-z]+"
+    # "hace 2 horas", "en 5 minutos", "3 dias atras"
+    r"|hace\s+\w+\s+(?:segundos?|minutos?|horas?|dias?|semanas?|meses?|anos?)"
+    r"|en\s+\d+\s+(?:segundos?|minutos?|horas?)"
+    r"|\d+\s+(?:segundos?|minutos?|horas?)\s+(?:atras|antes)"
+    # ultimo acceso, ultima modificacion, contadores de gente conectada
+    r"|ultim[oa]s?\s+(?:acceso|conexion|ingreso|visita|modificacion|"
+    r"actualizacion|entrada)"
+    r"|\d+\s+(?:visitas?|vistas?|conectados?|en\s+linea)"
+    # el saludo con tu nombre y las fechas escritas
+    r"|bienvenid[oa]s?"
+    r"|\d{1,2}\s*/\s*\d{1,2}\s*/\s*\d{2,4}"
+    r"|\d{4}-\d{2}-\d{2}", re.I)
 
 
 def firma_de_pagina(html):
@@ -512,6 +532,9 @@ def explorar_ramo(s, base, g):
         return None, ""
 
     firmas = [firma_de_pagina(html)]
+    # Los avisos del profesor son TEXTO suelto, no enlaces, asi que no los
+    # agarra nada de lo de abajo.  Hay que leerlos aparte.
+    g["avisos"] = avisos.avisos_de_la_pagina(html, g.get("nombre", ""))
     items = {}
     for it in cosas_de_la_pagina(html, base, propia=raiz):
         items.setdefault(it["url"], it)
@@ -541,6 +564,9 @@ def explorar_ramo(s, base, g):
         except Exception:
             continue
         firmas.append(firma_de_pagina(dentro))
+        for a in avisos.avisos_de_la_pagina(dentro, g.get("nombre", "")):
+            if all(a["huella"] != x["huella"] for x in g["avisos"]):
+                g["avisos"].append(a)
         for it in cosas_de_la_pagina(dentro, base, propia=url):
             if it["url"] in items:
                 continue
@@ -1243,11 +1269,21 @@ class Vigilante(object):
         que = plan.get("accion")
         if que == "recordar":
             f = leer_fecha(plan["cuando"])
+            tareas = self.estado.setdefault("tareas", {})
+            # Este camino (el del pedido hablado) se habia quedado con las dos
+            # fallas viejas de /recordar:
+            #  1. el id sin correr los segundos, asi que dos apuntes de la
+            #     misma hora se pisaban y uno desaparecia sin avisar;
+            #  2. sin es_tarea=False, asi que tus apuntes caian en la seccion
+            #     "PARA ENTREGAR", como si fueran entregas de un profe.
             idt = "mio_%d" % int(f.timestamp())
-            self.estado.setdefault("tareas", {})[idt] = {
+            while idt in tareas:
+                f += dt.timedelta(seconds=1)
+                idt = "mio_%d" % int(f.timestamp())
+            tareas[idt] = {
                 "grupo": "", "clave": "", "titulo": plan["que"], "url": "",
                 "vence": f.strftime("%Y-%m-%d %H:%M"), "hecho": False,
-                "nota": "", "mio": True}
+                "nota": "", "mio": True, "es_tarea": False}
             return "\u2705 Anotado: <b>%s</b>\nTe aviso el %s a las %s, una sola vez." % (
                 N.escapar(plan["que"]), f.strftime("%d/%m"), f.strftime("%H:%M"))
         if que == "pausa":
@@ -1305,15 +1341,39 @@ class Vigilante(object):
         if not t:
             return None
 
+        # Forma directa: "recordame el lunes a las 8 estudiar".
         for arranque in ("recordame", "recuerdame", "recordarme", "acordame",
-                         "avisame", "recorda"):
+                         "avisame", "avisarme", "recorda", "recuerda",
+                         "despertame", "despiertame", "levantame",
+                         "no me dejes olvidar", "acordate"):
             if t.startswith(arranque):
                 resto = crudo[len(arranque):].strip()
                 f, que = self._fecha_del_pedido(resto)
                 if not f:
                     return None
-                que = re.sub(r"^(que|de|para)\s+", "", que.strip(), flags=re.I)
-                return {"accion": "recordar", "que": que,
+                return {"accion": "recordar",
+                        "que": self._limpiar_que(que) or "lo que me pediste",
+                        "cuando": f.strftime("%Y-%m-%d %H:%M")}
+
+        # Forma armada: "hazme un recordatorio de levantarme en 2 min".
+        # Esto antes no lo entendia, y con la IA sin cupo el pedido se perdia
+        # entero.  Ahora lo resuelve el programa solo, sin gastar nada.
+        m = re.match(
+            r"^\s*(?:hazme|haceme|hac[e\u00e9]me|hacer|ponme|poneme|pon[e\u00e9]me|"
+            r"pon|crea|crear|cr[e\u00e9]ame|crearme|agrega|agregame|a\u00f1ade|"
+            r"anade|anota|anotame|apunta|apuntame|programa|programame|"
+            r"dejame|d[e\u00e9]jame|quiero|necesito|tengo que|hay que|"
+            r"me gustaria|me gustar\u00eda)\s+"
+            r"(?:un|una|el|la|mi|los|las)?\s*"
+            r"(?:recordatorio|recordatorios|recordatoria|aviso|alarma|"
+            r"apunte|nota|recuerdo|alerta|timer|cron[o\u00f3]metro)\b"
+            r"\s*(?:de|del|para|que|:|,)?\s*(.*)$",
+            crudo, re.I)
+        if m:
+            f, que = self._fecha_del_pedido(m.group(1).strip())
+            if f:
+                return {"accion": "recordar",
+                        "que": self._limpiar_que(que) or "lo que me pediste",
                         "cuando": f.strftime("%Y-%m-%d %H:%M")}
 
         for arranque in ("mandame los archivos de", "mandame el material de",
@@ -1337,6 +1397,24 @@ class Vigilante(object):
         if m:
             return {"accion": "pausa", "horas": float(m.group(2) or 3)}
         return None
+
+    def _limpiar_que(self, que):
+        """Saca el relleno que queda cuando le arranco la fecha al pedido.
+
+        Sin esto, "hazme un recordatorio de levantarme en 2 min" dejaba el
+        titulo "levantarme en", que se lee como algo a medio escribir.
+        """
+        t = str(que or "").strip()
+        t = re.sub(r"^(?:que|de|del|para|a|al|:|,)\s+", "", t, flags=re.I)
+        for _ in range(3):
+            nuevo = re.sub(
+                r"\s+(?:en|dentro|dentro de|a las|a la|para|el|la|los|las|"
+                r"de|del|este|esta|hoy|manana|ma\u00f1ana|proximo|pr\u00f3ximo)\s*$",
+                "", t, flags=re.I)
+            if nuevo == t:
+                break
+            t = nuevo
+        return t.strip(" ,:;.-")
 
     def _fecha_del_pedido(self, resto):
         """La fecha puede venir al principio o al final.  Prueba las dos."""
@@ -1884,8 +1962,17 @@ class Vigilante(object):
             "pausa: %s" % ("s\u00ed" if self.en_pausa() else "no"),
             "madrugada: %s" % ("sin sonido" if self.cfg().get("noche", True) else "suena"),
         ]
-        for clave, cuando_fallo in self.estado.get("fallas", {}).items():
-            lineas.append("\u26A0\uFE0F %s desde %s" % (clave, cuando_fallo))
+        for clave, ficha_falla in self.estado.get("fallas", {}).items():
+            # Antes esto pegaba el diccionario de la falla tal cual, o sea
+            # {'veces': 3, 'desde': ...}, y se leia como un error del programa.
+            if isinstance(ficha_falla, dict):
+                lineas.append("\u26A0\uFE0F %s \u00b7 %s \u00b7 desde %s" % (
+                    self.nombre_de(clave),
+                    ficha_falla.get("motivo", "no pude leerlo"),
+                    ficha_falla.get("desde", "hace rato")))
+            else:
+                lineas.append("\u26A0\uFE0F %s desde %s" % (
+                    self.nombre_de(clave), ficha_falla))
         return "\n".join(lineas) + self.texto_silenciados("\n\n")
 
     def texto_version(self):
@@ -2009,6 +2096,10 @@ class Vigilante(object):
                 clave, "todo", nombre=texto),
             "texto_novedades": lambda: self._memo("nov", self.texto_novedades),
             "texto_pendientes": lambda: self._memo("pen", self.texto_pendientes),
+            # v5.6: la lista de pendientes con botones, uno por pendiente.
+            "pendientes_para_panel": self.pendientes_para_panel,
+            "texto_avisos": self.texto_avisos,
+            "ficha_tarea": lambda idt: (self.estado.get("tareas") or {}).get(idt),
             "texto_semana": lambda: self._memo("sem", self.texto_semana),
             "texto_silenciados": self.texto_silenciados,
             "texto_diagnostico": self.texto_diagnostico,
@@ -2080,6 +2171,7 @@ class Vigilante(object):
                 # Nunca reintentar en bucle: varias fallas seguidas pueden
                 # dejarte la cuenta bloqueada.
                 log("[!] no pude entrar en la fuente", f["clave"])
+                self._aviso_de_clave(f)
                 return None, base
         except Exception as e:
             log("[!] fuente %s: %s" % (f["clave"], type(e).__name__))
@@ -2150,7 +2242,8 @@ class Vigilante(object):
 
         # Ultimo seguro: si la pagina cambio y no supe decir en que, aviso igual.
         firma = g.get("firma") or ""
-        cambio_ciego = bool(firma and ficha.get("firma") and firma != ficha["firma"])
+        firma_vieja = ficha.get("firma") or ""
+        cambio_ciego = bool(firma and firma_vieja and firma != firma_vieja)
         ficha["firma"] = firma
 
         if nuevo_ramo and not self.estado.get("arrancado"):
@@ -2172,24 +2265,62 @@ class Vigilante(object):
                      silencioso=True)
             return
 
-        if frescos:
-            self._avisar(clave, frescos)
-        elif cambio_ciego:
-            self._cambio_sin_nombre(clave, ficha)
+        # Los avisos escritos del profesor van primero y no esperan a nada:
+        # aca vienen las suspensiones, las clases online y los cambios de
+        # fecha, que es lo que no se puede perder.
+        hubo_aviso = self.avisos_nuevos(clave, ficha, g.get("avisos"))
 
-    def _cambio_sin_nombre(self, clave, ficha):
-        """La pagina del ramo cambio pero no pude decir en que. Antes esto
-        pasaba callado y era justo el caso que se me escapaba. Ahora avisa,
-        con freno para no repetir."""
+        if frescos:
+            ficha["ciego_veces"] = 0
+            self._avisar(clave, frescos)
+        elif hubo_aviso:
+            ficha["ciego_veces"] = 0
+        elif cambio_ciego:
+            self._cambio_sin_nombre(clave, ficha, firma_vieja, firma)
+
+    def _cambio_sin_nombre(self, clave, ficha, firma_vieja="", firma_nueva=""):
+        """La pagina del ramo cambio pero no pude decir en que.
+
+        Este aviso existe porque es el ultimo seguro contra perderse algo.
+        El problema es que avisaba de mas: la pagina cambia sola y te llegaban
+        tres por dia sin que hubiera nada nuevo.  Ahora tiene tres frenos.
+        """
         if not getattr(CFG, "AVISAR_CAMBIO_CIEGO", True):
-            return
+            return False
         if self.callado(clave):
-            return
-        horas = getattr(CFG, "HORAS_ENTRE_AVISOS_CIEGOS", 6)
+            return False
+
+        # Freno 1, el importante: si esta firma ya la vi antes, la pagina esta
+        # yendo y viniendo entre dos estados, o sea que se mueve sola.  Eso no
+        # es un cambio, es ruido, y este ramo deja de dar avisos ciegos.
+        historia = ficha.setdefault("firmas_vistas", [])
+        if firma_nueva and firma_nueva in historia:
+            if not ficha.get("pagina_inquieta"):
+                ficha["pagina_inquieta"] = True
+                log("[i] %s cambia sola, dejo de avisar a ciegas"
+                    % self.nombre_de(clave))
+            return False
+        if firma_nueva:
+            historia.append(firma_nueva)
+            del historia[:-8]
+        if ficha.get("pagina_inquieta"):
+            return False
+
+        # Freno 2: dos revisiones seguidas con la pagina distinta antes de
+        # molestarte.  Un cambio de verdad sigue estando en la revision que
+        # viene, el ruido no.
+        faltan = getattr(CFG, "REVISIONES_PARA_AVISO_CIEGO", 2)
+        ficha["ciego_veces"] = ficha.get("ciego_veces", 0) + 1
+        if ficha["ciego_veces"] < faltan:
+            return False
+        ficha["ciego_veces"] = 0
+
+        # Freno 3: como maximo uno por dia por ramo.
+        horas = getattr(CFG, "HORAS_ENTRE_AVISOS_CIEGOS", 24)
         ultimo = leer_fecha(ficha.get("aviso_ciego", ""))
         hoy = ahora()
         if ultimo and (hoy - ultimo).total_seconds() < horas * 3600:
-            return
+            return False
         ficha["aviso_ciego"] = hoy.strftime("%Y-%m-%d %H:%M")
         N.enviar("%s <b>%s</b>\nCambi\u00f3 algo en la p\u00e1gina del ramo y no "
                  "pude decirte qu\u00e9. Puede ser un texto editado o algo que la "
@@ -2198,6 +2329,190 @@ class Vigilante(object):
                     N.escapar(ficha.get("nombre", "un ramo")),
                     N.enlace("abrir el ramo", ficha.get("url", ""))),
                  silencioso=True)
+        return True
+
+    # =================================================================
+    #  avisos escritos del profesor
+    # =================================================================
+    def avisos_nuevos(self, clave, ficha, fichas_de_avisos):
+        """Lo que el profe escribe en el tablero de Avisos.
+
+        Esto era el agujero mas grande que tenia el bot: solo miraba ENLACES,
+        y un aviso no es un enlace, es texto.  Por ahi pasan las suspensiones,
+        las clases online y los cambios de fecha de las pruebas.
+
+        Un aviso NO respeta el silencio del ramo y, si es urgente, suena
+        aunque sea de madrugada.  Perderse una suspension no se arregla
+        despues.  Devuelve True si mando alguno.
+        """
+        if not getattr(CFG, "AVISAR_AVISOS", True):
+            return False
+        lista = fichas_de_avisos or []
+        if not lista:
+            return False
+
+        guardadas = self.estado.setdefault("avisos_vistos", {})
+        nuevos = avisos.nuevos(lista, guardadas)
+        if not nuevos:
+            return False
+
+        hoy = ahora()
+        sello = hoy.strftime("%Y-%m-%d")
+
+        # La primera vez que leo los avisos de un ramo ya hay avisos viejos.
+        # Esos se anotan callados: no son novedad, son historia.
+        if not ficha.get("avisos_leidos"):
+            ficha["avisos_leidos"] = True
+            for a in nuevos:
+                guardadas[a["huella"]] = sello
+            log("[i] anote %d avisos viejos de %s"
+                % (len(nuevos), self.nombre_de(clave)))
+            return False
+
+        nombre = self.nombre_de(clave)
+        rompe = getattr(CFG, "AVISOS_ROMPEN_SILENCIO", True)
+        if self.callado(clave) and not rompe:
+            for a in nuevos:
+                guardadas[a["huella"]] = sello
+            return False
+
+        mandados = 0
+        for a in nuevos[:getattr(CFG, "AVISOS_POR_TANDA", 4)]:
+            texto = avisos.lineas_del_aviso(
+                a, ramo=nombre, url=ficha.get("url", ""),
+                escapar=N.escapar, enlace=N.enlace)
+
+            # Dos niveles, y la diferencia importa.  Nivel 1 (suspension,
+            # clase online, cambio de fecha) te despierta.  Nivel 2 (prueba,
+            # entrega, asistencia) NO: antes esas palabras contaban como
+            # urgentes, o sea que casi todo iba a sonar a las 3 de la manana, y
+            # una alarma que suena siempre se apaga.
+            urgente = bool(a.get("urgente"))
+            suena = urgente and getattr(CFG, "AVISOS_SUENAN_DE_NOCHE", True)
+            if a.get("importante") and getattr(
+                    CFG, "IMPORTANTES_SUENAN_DE_NOCHE", False):
+                suena = True
+            callado = self.en_silencio() and not suena
+
+            # Queda en Pendientes como algo para mirar, no para entregar, asi
+            # no se te pierde entre los mensajes del chat.
+            idt = "aviso_" + a["huella"]
+            self.estado.setdefault("tareas", {})[idt] = {
+                "grupo": nombre, "clave": clave, "titulo": a["titulo"],
+                "url": ficha.get("url", ""), "vence": "", "hecho": False,
+                "nota": "", "es_tarea": False, "aviso": True,
+                "texto": a.get("texto", ""), "tarjeta": texto,
+                # Sin fecha de nacimiento no se puede ordenar por fecha ni
+                # archivar solo: un aviso no tiene fecha de entrega.
+                "nacio": hoy.strftime("%Y-%m-%d %H:%M")}
+
+            mid = N.enviar(texto, silencioso=callado,
+                           botones=self.botones_tarjeta(idt, clave,
+                                                        es_tarea=False))
+            if mid:
+                self.estado["tareas"][idt]["mensaje_id"] = mid
+
+            # Recien DESPUES de mandarlo lo anoto como visto. Al reves, si el
+            # mensaje no sale, el aviso se pierde para siempre.
+            guardadas[a["huella"]] = sello
+            self.estado.setdefault("novedades", []).insert(0, {
+                "f": hoy.strftime("%Y-%m-%d %H:%M"), "c": clave, "g": nombre,
+                "t": a["titulo"], "u": ficha.get("url", ""), "tipo": "aviso"})
+            mandados += 1
+
+        del self.estado["novedades"][CFG.NOVEDADES_GUARDADAS:]
+
+        # La lista de huellas no crece para siempre.
+        tope = getattr(CFG, "AVISOS_GUARDADOS", 400)
+        if len(guardadas) > tope:
+            viejas = sorted(guardadas.items(), key=lambda x: x[1])
+            for h, _ in viejas[:len(guardadas) - tope]:
+                guardadas.pop(h, None)
+
+        if mandados:
+            self.guardar()
+        return mandados > 0
+
+    def texto_avisos(self, cuantos=8):
+        """Los ultimos avisos escritos que junte, para /avisos."""
+        fichas = []
+        for idt, t in (self.estado.get("tareas") or {}).items():
+            if t.get("aviso"):
+                fichas.append((idt, t))
+        if not fichas:
+            return ("Todav\u00eda no junt\u00e9 ning\u00fan aviso escrito de los "
+                    "profesores.\nLos leo del tabl\u00f3n de cada ramo en cada "
+                    "revisi\u00f3n, as\u00ed que en cuanto haya uno te llega solo.")
+        # Antes esto ordenaba por x[0], que es el id: "aviso_" + una huella.
+        # O sea que el orden era el del hash, puro azar, y el aviso de arriba
+        # no era el mas nuevo. Ahora va por fecha, el mas nuevo primero.
+        fichas.sort(key=lambda x: str(x[1].get("nacio") or ""), reverse=True)
+        lineas = ["\U0001F4E3 <b>Avisos de los profes</b>", ""]
+        for _, t in fichas[:cuantos]:
+            # La admiracion es solo para los urgentes de verdad. Antes la
+            # llevaban TODOS, asi que no distinguia nada.
+            if t.get("hecho"):
+                marca = "\u2705"
+            elif avisos.urgente(t.get("texto") or t.get("titulo", "")):
+                marca = "\u2757"
+            else:
+                marca = "\U0001F4E3"
+            lineas.append("%s <b>%s</b>" % (marca, N.escapar(t.get("grupo", ""))))
+            cuerpo = t.get("texto") or t.get("titulo", "")
+            lineas.append(N.escapar(cuerpo[:300]))
+            lineas.append("")
+        return "\n".join(lineas).strip()
+
+    def _aviso_de_clave(self, f):
+        """La plataforma rechazo el usuario o la clave.
+
+        Casi siempre es porque cambiaste la clave y el bot sigue con la vieja.
+        Se avisa UNA vez por dia: insistir no sirve y varios intentos seguidos
+        pueden dejarte la cuenta bloqueada.
+        """
+        marcas = self.estado.setdefault("aviso_clave", {})
+        hoy = ahora()
+        ultimo = leer_fecha(marcas.get(f["clave"], ""))
+        if ultimo and (hoy - ultimo).total_seconds() < 24 * 3600:
+            return
+        marcas[f["clave"]] = hoy.strftime("%Y-%m-%d %H:%M")
+        N.enviar(
+            "\U0001F510 <b>No pude entrar a la plataforma %s</b>\n"
+            "El usuario y la clave est\u00e1n puestos, pero la plataforma no los "
+            "acepta.\n\nCasi siempre es una de estas tres:\n"
+            "1. Cambiaste la clave y ac\u00e1 sigue la vieja.\n"
+            "2. La plataforma te pidi\u00f3 cambiarla al entrar.\n"
+            "3. La cuenta est\u00e1 bloqueada por intentos fallidos.\n\n"
+            "No voy a seguir probando para no bloquearte la cuenta. Cuando "
+            "arregles la clave, avisame y reviso.\n"
+            "<i>Mientras tanto sigo avisando de los otros ramos.</i>"
+            % N.escapar(f.get("clave", "")))
+
+    def pendientes_para_panel(self, cuantos=8):
+        """La lista de pendientes lista para poner botones.
+
+        Devuelve [(id, titulo, cuando, es_tarea, tiene_nota)].  El panel la usa
+        para armar una fila por pendiente, que era justo lo que faltaba: la
+        lista se ve\u00eda pero no se pod\u00eda tocar.
+        """
+        hoy = ahora()
+        salida = []
+        for idt, t in (self.estado.get("tareas") or {}).items():
+            if t.get("hecho"):
+                continue
+            f = leer_fecha(t.get("vence"))
+            if f:
+                faltan = (f - hoy).total_seconds() / 3600.0
+                cuando = ("vencida" if faltan < 0 else
+                          "en %d h" % faltan if faltan < 48 else
+                          "en %d d" % (faltan / 24))
+                orden = f.strftime("%Y-%m-%d %H:%M")
+            else:
+                cuando, orden = "sin fecha", "9999"
+            salida.append((orden, idt, t.get("titulo", ""), cuando,
+                           t.get("es_tarea", True), bool(t.get("nota"))))
+        salida.sort(key=lambda x: x[0])
+        return [x[1:] for x in salida[:cuantos]]
 
     def _anotar_falla(self, clave, motivo):
         """Tres revisiones seguidas antes de alarmar. Las plataformas se
@@ -2368,7 +2683,10 @@ class Vigilante(object):
 
     def avisos_de_plazo(self):
         hoy = ahora()
-        avisos = self.estado.setdefault("avisos", {})
+        # OJO: esta variable NO puede llamarse "avisos": arriba del archivo hay
+        # un `import avisos`, y un nombre local le tapa el modulo entero dentro
+        # de la funcion. Cualquier avisos.algo() de aca reventaria.
+        ya_avisados = self.estado.setdefault("avisos", {})
         for idt, t in list(self.estado.get("tareas", {}).items()):
             if t.get("hecho") or not t.get("vence"):
                 continue
@@ -2732,9 +3050,10 @@ class Vigilante(object):
             return
         if self.estado.get("version_avisada") == actual:
             return
-        self.estado["version_avisada"] = actual
-        self.guardar()
-        lineas = ["\U0001F195 <b>Actualizaci\u00f3n aplicada: v%s</b>" % actual]
+        hoy = ahora()
+        lineas = ["\U0001F195 <b>Actualizaci\u00f3n aplicada: v%s</b>" % actual,
+                  "\U0001F553 entr\u00f3 el %s a las %s"
+                  % (hoy.strftime("%d/%m"), hoy.strftime("%H:%M"))]
         if getattr(VER, "TITULO", ""):
             lineas.append("<i>%s</i>" % N.escapar(VER.TITULO))
         lineas.append("")
@@ -2749,7 +3068,15 @@ class Vigilante(object):
                 lineas.append("%d. %s" % (i, N.escapar(p)))
         lineas.append("")
         lineas.append("Si algo de esto no funciona, avisame y lo corrijo.")
-        N.enviar("\n".join(lineas))
+        # Primero MANDO, despues anoto.  Al reves, si el mensaje no salia, la
+        # memoria ya decia "avisada" y el aviso se perdia para siempre: era
+        # exactamente el caso de "actualice y el bot no me dijo nada".
+        if N.enviar("\n".join(lineas)) is None:
+            log("[!] no pude mandar el aviso de la v%s, lo reintento" % actual)
+            return
+        self.estado["version_avisada"] = actual
+        self.estado["version_desde"] = hoy.strftime("%Y-%m-%d %H:%M")
+        self.guardar()
         log("[i] avise la version %s" % actual)
 
     def arranque(self):
@@ -2775,8 +3102,21 @@ class Vigilante(object):
         """Un recordatorio tuyo que ya paso hace rato se archiva solo.  Si no,
         te queda en Pendientes para siempre y ensucia la lista."""
         horas = getattr(CFG, "HORAS_PARA_OLVIDAR_MIO", 12)
+        dias_aviso = getattr(CFG, "DIAS_PARA_ARCHIVAR_AVISOS", 21)
         hoy = ahora()
         for idt, t in list(self.estado.get("tareas", {}).items()):
+            # Un aviso del profe NO tiene fecha de entrega, asi que nunca
+            # entraba aca y se quedaba en Pendientes para siempre. En un
+            # semestre la lista quedaba inservible. Se archiva solo, callado.
+            if t.get("aviso") and not t.get("hecho") and dias_aviso:
+                nacio = leer_fecha(t.get("nacio"))
+                if not nacio:
+                    # De una version vieja: le pongo fecha ahora y lo dejo
+                    # vivir el plazo completo desde hoy.
+                    t["nacio"] = hoy.strftime("%Y-%m-%d %H:%M")
+                elif (hoy - nacio).days >= dias_aviso:
+                    t["hecho"] = True
+                continue
             if not t.get("mio") or t.get("hecho") or not t.get("vence"):
                 continue
             f = leer_fecha(t["vence"])
