@@ -33,7 +33,12 @@ MENU = [
     ("callar", "silenciar un ramo"),
     ("revisar", "mir\u00e1 ahora"),
     ("recordar", "guardame un apunte"),
+    ("clases", "clases por videoconferencia"),
+    ("compartir", "con qui\u00e9n comparto y qu\u00e9"),
+    ("afuera", "material de otras secciones"),
     ("ia", "prender o apagar res\u00famenes"),
+    ("reloj", "revisar el reloj de GitHub"),
+    ("miclave", "cargar tu clave de IA cifrada"),
     ("exportar", "mandame todo en un archivo"),
     ("ayuda", "c\u00f3mo se usa cada uno"),
 ]
@@ -42,6 +47,7 @@ MENU = [
 # pegado al comando, para que no parezca un comando repetido.
 COLA = {
     "resumen": "ramo calculo",
+    "compartir": "con juan calculo",
     "pausa": "3",
     "perfil": "apretado termo",
     "callar": "calculo",
@@ -314,6 +320,53 @@ def _recordar(estado, resto, ahora):
         N.escapar(texto.strip()), fecha.strftime("%d/%m"), fecha.strftime("%H:%M"))
 
 
+def _compartir(estado, resto, acc):
+    """/compartir con <alias> <ramo>   abre o cierra UN ramo para UNA persona.
+
+    Sin argumentos se abre el panel, que es mas comodo.  Esto es para ir
+    directo cuando ya sabes que queres.
+    """
+    import compartir as CO
+
+    palabras = [p for p in resto.split() if pelado(p) != "con"]
+    if not palabras:
+        return CO.texto_personas(estado, nombre_de=acc["nombre"],
+                                 escapar=N.escapar)
+
+    alias = pelado(palabras[0])
+    pid = ""
+    for clave, ficha in CO.lista(estado):
+        if pelado(ficha.get("alias", "")).startswith(alias):
+            pid = clave
+            break
+    if not pid:
+        return ("No tengo a nadie que se llame <b>%s</b>.\n"
+                "Los que tengo: %s"
+                % (N.escapar(palabras[0]),
+                   ", ".join(f.get("alias", "?") for _c, f in CO.lista(estado))
+                   or "ninguno todav\u00eda"))
+
+    if len(palabras) < 2:
+        abiertos = CO.ramos_abiertos(estado, pid)
+        if not abiertos:
+            return ("<b>%s</b> no ve ning\u00fan ramo tuyo."
+                    % N.escapar(palabras[0]))
+        return ("<b>%s</b> ve: %s"
+                % (N.escapar(palabras[0]),
+                   ", ".join(N.escapar(acc["nombre"](c)) for c in abiertos)))
+
+    buscado = pelado(" ".join(palabras[1:]))
+    for clave, nombre, _emoji in (acc["lista_ramos"]() or []):
+        if buscado in pelado(nombre):
+            abierto, bien = CO.alternar_ramo(estado, pid, clave)
+            if not bien:
+                return "No pude tocar ese permiso."
+            return ("Listo. <b>%s</b> ahora ve <b>%s</b>." if abierto else
+                    "Listo. <b>%s</b> ya no ve <b>%s</b>.") % (
+                N.escapar(palabras[0]), N.escapar(nombre))
+    return "No encontr\u00e9 el ramo <b>%s</b>." % N.escapar(" ".join(palabras[1:]))
+
+
 def _ia(estado, resto):
     cfg = estado.setdefault("config", {})
     p = pelado(resto)
@@ -504,6 +557,20 @@ def atender(estado, acc, ahora, espera=0):
             acc["abrir_panel"]()
             continue
 
+        # Estabas cargando tu clave de IA.  Se guarda cifrada y tu mensaje
+        # se borra en el acto, para que no quede colgado en el chat.
+        if not texto.startswith("/") and estado.get("esperando_clave"):
+            pid = estado.pop("esperando_clave", None)
+            borrar_ya(estado, mi_mensaje)
+            import compartir as CO
+            bien, motivo = CO.guardar_clave(estado, pid, texto)
+            if bien:
+                efimero(estado, "\U0001F510 Guardada y cifrada. No la muestro "
+                                "en ning\u00fan lado y borr\u00e9 tu mensaje.")
+            else:
+                efimero(estado, "No la guard\u00e9: %s." % motivo)
+            continue
+
         # Cualquier cosa que escribas y no sea un comando es una pregunta
         # para la IA sobre tus propias cosas.
         # Elegiste la hora con un boton y ahora mandas el texto: se anota al
@@ -524,6 +591,15 @@ def atender(estado, acc, ahora, espera=0):
                 acc["dibujar_panel"]("p:rec", None)
                 continue
 
+        # Tocaste "Buscar por nombre" en un ramo: lo que escribas es el nombre
+        # del archivo, no una pregunta para la IA.
+        if not texto.startswith("/") and estado.get("esperando_busqueda"):
+            clave = estado.pop("esperando_busqueda", None)
+            if clave and acc.get("buscar_por_nombre"):
+                borrar_ya(estado, m.get("message_id"))
+                acc["buscar_por_nombre"](clave, texto.strip()[:80])
+                continue
+
         if not texto.startswith("/"):
             if acc.get("proponer"):
                 # Puede ser una orden ("recordame a las 8") o una pregunta.
@@ -542,7 +618,9 @@ def atender(estado, acc, ahora, espera=0):
         resto = partes[1].strip() if len(partes) > 1 else ""
         r = None
 
-        info = cmd in ("ayuda", "help", "ultimo", "pendientes", "semana", "estado",
+        info = cmd in ("clases", "clase", "video", "videoconferencia",
+                       "afuera", "otras", "secciones",
+                       "ayuda", "help", "ultimo", "pendientes", "semana", "estado",
                        "perfil", "perfiles", "version", "actualizacion")
 
         if cmd in ("start", "panel", "menu"):
@@ -609,6 +687,21 @@ def atender(estado, acc, ahora, espera=0):
                 r = _recordar(estado, resto, ahora)
         elif cmd == "ia":
             r = _ia(estado, resto)
+        elif cmd in ("clases", "clase", "video", "videoconferencia"):
+            r = acc["texto_clases"]()
+        elif cmd in ("compartir", "comparto"):
+            if not resto.strip():
+                acc["dibujar_panel"]("p:comp", None)
+            else:
+                r = _compartir(estado, resto, acc)
+        elif cmd in ("afuera", "otras", "secciones"):
+            r = acc["texto_afuera"]()
+        elif cmd in ("reloj", "latido", "github"):
+            acc["accion"]("reloj")
+        elif cmd in ("miclave", "micalve", "clave"):
+            import compartir as CO
+            estado["esperando_clave"] = str(estado.get("_chat") or "yo")
+            r = CO.texto_privacidad()
         elif cmd in ("version", "actualizacion"):
             r = acc["texto_version"]()
         elif cmd == "exportar":
