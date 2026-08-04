@@ -83,6 +83,16 @@ ANCLAR_PANEL = False
 # solo para bajarlo.  En el chat pesa cero hasta que lo tocas.
 ADJUNTAR = True
 ADJUNTOS_POR_AVISO = 5       # cuantos archivos manda por novedad
+
+# Cuando VOS pedis los archivos de un ramo, el alcance manda.  A fin de
+# semestre "todo el ramo" son cientos de archivos, asi que por defecto va
+# la ultima semana y lo demas se pide aparte.
+ALCANCE_POR_DEFECTO = "semana"
+DIAS_DE_ALCANCE = {"semana": 7, "mes": 30, "todo": 0}   # 0 = sin limite
+ARCHIVOS_POR_TANDA = 5           # cuantos manda de una antes de respirar
+PREGUNTAR_DESDE = 6              # de aca para arriba pide confirmacion
+AVISAR_AVANCE_CADA = 10          # "van 20 de 63"
+TOPE_ARCHIVOS_DE_UNA = 80        # techo duro, para no colgar la corrida
 PESO_ADJUNTO_MB = 45         # el tope que aguanta la mensajeria es 50
 ADJUNTAR_EXTENSIONES = [
     ".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx",
@@ -150,8 +160,17 @@ IA = {
     "archivos_maximos": 4,        # cuantos adjuntos entran en un resumen
     "paginas_maximas": 20,
     "peso_maximo_mb": 18,
-    "fallas_para_apagar": 5,
+    "fallas_para_apagar": 5,      # se cuenta POR CLAVE, no para todo el sistema
     "ramos_sin_ia": [],           # nombres o pedazos de nombre
+    "tokens_maximos": 1200,       # para que no corte una frase a la mitad
+    # Varias claves, en orden de preferencia.  La primera es la titular, las
+    # otras son repuesto.  Alcanza con crear el Secret IA_KEY_2 y listo.
+    "claves_env": ["IA_KEY", "IA_KEY_2", "IA_KEY_3", "IA_KEY_4", "IA_KEY_5"],
+    "env_lista": "IA_KEYS",       # o todas juntas aca, separadas por coma
+    # Cuanto descansa una clave segun por que fallo.
+    "descanso_cupo_minutos": 60,  # se paso del cupo o le pegamos muy seguido
+    "descanso_red_minutos": 5,    # se cayo el servicio o no hubo internet
+    "cupo_hasta_manana": True,    # si se agoto el cupo del dia, hasta el otro dia
 }
 
 # Las etapas de la animacion.  Son reales, no relleno: si se traba en una,
@@ -178,9 +197,12 @@ FRASES = [
     "aguantame",
     "laburando",
 ]
-ANIM_SEGUNDOS = 6.5      # cada cuanto se mueve el texto
+# Cuarta queja sobre lo mismo: tiene que sentirse una carga, no algo que va
+# a explotar.  Todo lo que se mueva en el bot sale de estos tres numeros y de
+# ningun numero suelto escrito a mano en otro archivo.
+ANIM_SEGUNDOS = 9.0      # cada cuanto se mueve el texto
 ANIM_PUNTOS = 3          # llega a tres puntos y vuelve a cero
-ANIM_CADA_FRASE = 3      # cada cuantos movimientos cambia la frase
+ANIM_CADA_FRASE = 5      # las frases rotan mas lento que los puntos
 
 # Cuando el recordatorio es tuyo (lo pediste con /recordar o hablando), suena
 # UNA sola vez, a la hora que pediste.  Los perfiles de insistencia son para
@@ -211,3 +233,38 @@ PALABRAS_TAREA = ["tarea", "trabajo", "entrega", "evaluacion",
 # Cosas que se agrupan en un solo aviso si aparecen juntas en el mismo ramo
 # dentro de esta ventana.  Un trabajo con 3 PDF es UN aviso, no cuatro.
 MINUTOS_PARA_AGRUPAR = 30
+
+# ------------------------------------------------- clases por video
+# Son pocas al semestre pero son las que no se pueden perder.  Por eso una
+# clase por videoconferencia rompe todas las reglas: avisa aunque el ramo
+# este silenciado y suena aunque sea de madrugada.
+AVISAR_CLASES = True
+CLASES_ROMPEN_SILENCIO = True    # avisa aunque el ramo este callado
+CLASES_SUENAN_DE_NOCHE = True    # y suena aunque sea la franja silenciosa
+CLASES_SIN_ENLACE = True         # tambien avisa si solo lo dice con palabras
+HORAS_PARA_REPETIR_CLASE = 0     # 0 = nunca repite, se avisa una sola vez
+
+# ------------------------------------------- el reloj de GitHub
+# GitHub apaga solo el horario programado de un repositorio que lleva 60
+# dias quieto.  En vacaciones eso pasa seguro.  A los 50 avisa, y si puede
+# lo arregla solo moviendo un archivito de latido.
+REVISAR_RELOJ = True
+DIAS_PARA_AVISAR_QUIETO = 50
+DIAS_QUE_APAGA_GITHUB = 60
+DESPERTAR_RELOJ_SOLO = True      # si puede, lo arregla sin molestarte
+HORA_REVISAR_RELOJ = "10:00"     # una vez por dia alcanza y sobra
+
+# --------------------------------------------------- compartir material
+# De fabrica NO se comparte nada.  Vos abris ramo por ramo y persona por
+# persona.  Lo que llega de otras secciones no es prioridad: un aviso de
+# una linea y se termina ahi.
+COMPARTIR = True
+COMPARTIR_DE_FABRICA = []        # ningun ramo sale solo. A proposito.
+MAXIMO_PERSONAS = 12             # circulo chico y cerrado
+AVISOS_DE_AFUERA_SILENCIOSOS = True   # nunca suenan
+RESUMIR_LO_DE_AFUERA = True      # una linea escrita por la IA
+LARGO_RESUMEN_DE_AFUERA = 180    # y corta, que no es prioridad
+AGRUPAR_LO_DE_AFUERA = True      # si llegan cinco cosas, va un solo aviso
+# Lo de afuera NO entra en los perfiles de insistencia ni en el
+# recordatorio de "no lo viste".  Esto no se puede prender: es la regla.
+GUARDADOS_DE_AFUERA = 60
