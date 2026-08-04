@@ -48,6 +48,19 @@ def vacio():
         "ultimo_resumen": "",
         "ultimo_latido": "",
         "fallas_ia": 0,
+        # --- v5.5 ---
+        "personas": {},        # id -> {alias, chat, ramos, bloqueada, ...}
+        "de_afuera": [],       # material de otras secciones, ya filtrado
+        "claves_ajenas": {},   # id -> clave de IA CIFRADA, nunca en claro
+        "clases_avisadas": {}, # huella de clase -> fecha, para no repetir
+        "esperando_clave": None,
+        "repo_movido": "",     # ultima vez que se movio el repositorio
+        "repo_dias": None,     # cuantos dias lleva quieto
+        "repo_aviso": "",      # el dia que te avise, para no insistir
+        "repo_aviso_ciego": "",
+        "repo_motivo": "",
+        "repo_toques": 0,
+        "ultimo_reloj": "",    # ultima vez que revise el reloj
     }
 
 
@@ -70,6 +83,9 @@ def reducir(e):
         "grupos": {k: {"visto": v.get("visto", "")} for k, v in e.get("grupos", {}).items()},
         "archivados": e.get("archivados", {}),
         "tg_offset": e.get("tg_offset", 0),
+        "clases_avisadas": e.get("clases_avisadas", {}),
+        "repo_movido": e.get("repo_movido", ""),
+        "repo_aviso": e.get("repo_aviso", ""),
         "nota": "memoria reducida: el resto vive en el gist privado",
     }
 
