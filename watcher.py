@@ -29,8 +29,11 @@ except Exception:
     pass
 
 import almacen
+import clases
 import comandos
+import compartir
 import fuentes as CFG
+import salud
 import version as VER
 import ia as IA
 import notificar as N
@@ -208,6 +211,11 @@ def ignorar(href):
         return True
     if h.startswith("#") or h.startswith("javascript:") or h.startswith("mailto:"):
         return True
+    # Una sala de videoconferencia NUNCA se ignora, aunque caiga en la lista
+    # de arriba.  La lista tiene "/meeting/" para saltear el chat interno de
+    # la plataforma, y ese filtro se estaba comiendo las clases por video.
+    if getattr(CFG, "AVISAR_CLASES", True) and clases.es_sala(h):
+        return False
     limpio_h = h.split("#")[0]
     return any(x in limpio_h for x in CFG.IGNORAR)
 
@@ -700,6 +708,63 @@ def _leer_un_calendario(nombre, url):
 
 
 # =====================================================================
+#  archivos: rangos, tipos y pesos.  Todo esto lo calcula el programa,
+#  la IA no cuenta ni mide nada.
+# =====================================================================
+GRUPOS_DE_TIPO = {
+    "pdf": (".pdf",),
+    "doc": (".doc", ".docx", ".odt", ".rtf"),
+    "ppt": (".ppt", ".pptx", ".odp"),
+    "xls": (".xls", ".xlsx", ".ods", ".csv"),
+}
+
+
+def de_este_tipo(tipo, nombre, url):
+    """"todos los pdf de contabilidad": esto decide si entra o no."""
+    tipo = (tipo or "todo").strip().lower()
+    puntas = GRUPOS_DE_TIPO.get(tipo)
+    if not puntas:
+        return True
+    bolsa = (nombre or "").lower() + " " + (url or "").lower().split("?")[0]
+    return any(p in bolsa for p in puntas)
+
+
+def _dia_de(texto):
+    try:
+        return dt.datetime.strptime(str(texto or "").strip()[:10], "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+
+def rango_de_fechas(alcance=None, desde="", hasta=""):
+    """Devuelve (desde, hasta) como dias.  desde None = todo el ramo."""
+    hoy = ahora().date()
+    d, h = _dia_de(desde), _dia_de(hasta) or hoy
+    if d:
+        return d, h
+    alcance = str(alcance or getattr(CFG, "ALCANCE_POR_DEFECTO", "semana")).lower()
+    dias = getattr(CFG, "DIAS_DE_ALCANCE", {}).get(alcance, 7)
+    if not dias:
+        return None, h
+    return hoy - dt.timedelta(days=dias), h
+
+
+def rango_lindo(d, h):
+    """Como se lee el rango en el chat.  Nunca se dice un rango que no se uso."""
+    if not d:
+        return "de todo el ramo"
+    fin = "hoy" if h >= ahora().date() else h.strftime("%d/%m")
+    return "desde el %s hasta %s" % (d.strftime("%d/%m"), fin)
+
+
+def peso_lindo(cuanto):
+    cuanto = int(cuanto or 0)
+    if cuanto >= 1024 * 1024:
+        return "%d MB" % max(1, int(round(cuanto / (1024.0 * 1024.0))))
+    return "%d KB" % max(1, int(round(cuanto / 1024.0)))
+
+
+# =====================================================================
 #  el vigilante
 # =====================================================================
 class Vigilante(object):
@@ -709,6 +774,7 @@ class Vigilante(object):
         self.estado["_chat"] = os.environ.get("TG_CHAT", "").strip()
         self.gist_nuevo = gist_nuevo
         self.sesiones = {}
+        self.bases = {}          # la direccion de cada plataforma, ya resuelta
         self.cache = {}          # pantallas ya calculadas, ver _memo
         self.acc = self._acciones()
 
@@ -852,7 +918,7 @@ class Vigilante(object):
 
         def pintar():
             puntos = "." * (est["tic"] % (getattr(CFG, "ANIM_PUNTOS", 3) + 1))
-            cada = getattr(CFG, "ANIM_CADA_FRASE", 4)
+            cada = getattr(CFG, "ANIM_CADA_FRASE", 5)
             frases = getattr(CFG, "FRASES", []) or [""]
             # Alterna: unos tics con la etapa real, unos con una frase suelta.
             vuelta = est["tic"] // max(cada, 1)
@@ -869,7 +935,7 @@ class Vigilante(object):
 
         def latir():
             while vivo.is_set():
-                if vivo.wait(getattr(CFG, "ANIM_SEGUNDOS", 2.4)):
+                if vivo.wait(getattr(CFG, "ANIM_SEGUNDOS", 9.0)):
                     if not vivo.is_set():
                         return
                 est["tic"] += 1
@@ -987,23 +1053,28 @@ class Vigilante(object):
                 for n in nov))
         return "\n\n".join(piezas)
 
-    def preguntar(self, pregunta):
-        """Charla. Si la IA esta apagada te lo dice y no te deja colgado."""
+    def preguntar(self, pregunta, cerrar=None):
+        """Charla.  Un pedido, una respuesta.
+
+        Dos reglas de esta version: no te repito tu propio mensaje, y si ya hay
+        una animacion en el chat la respuesta la reemplaza, asi no llegan dos
+        mensajes por lo mismo."""
+        panel = N.teclado([[("\U0001F431 Panel", "p:raiz")]])
+        if cerrar is None:
+            avisar, cerrar = self.animar("Pensando")
+            avisar(CFG.ETAPAS["pensando"])
         if not IA.disponible(self.estado):
-            N.enviar("La IA est\u00e1 apagada. Prendela con /ia on."
-                     if self.cfg().get("ia", True) is False
-                     else "No tengo IA disponible ahora. Prob\u00e1 /estado.")
+            cerrar("No te puedo contestar: " + N.escapar(self.por_que_no_hay_ia()),
+                   panel)
             return
-        avisar, cerrar = self.animar("Pensando")
-        avisar(CFG.ETAPAS["pensando"])
         respuesta = IA.preguntar(self.estado, pregunta, self.libreta())
         if not respuesta:
-            cerrar("No pude contestarte. %s"
-                   % N.escapar(self.estado.get("ultimo_error_ia", ""))[:200])
+            cerrar("No pude contestarte ahora: %s"
+                   % N.escapar(self.estado.get("ultimo_error_ia",
+                                               "no me lleg\u00f3 respuesta"))[:200],
+                   panel)
             return
-        cerrar("\U0001F9E0 <b>%s</b>\n%s"
-               % (N.escapar(pregunta[:80]), N.cita(N.escapar(respuesta))),
-               N.teclado([[("\U0001F431 Panel", "p:raiz")]]))
+        cerrar(N.cita("\U0001F9E0 " + N.escapar(respuesta)), panel)
 
     # ------------------------------------------------ ordenes habladas
     def _contexto_orden(self):
@@ -1132,6 +1203,39 @@ class Vigilante(object):
                     "\U0001F916 <b>Confirmame esto</b>\n\u2705 Marco como hecha:\n%s%s"
                     % (N.escapar(t.get("titulo", "")), pie))
 
+        if que in ("buscar_archivos", "archivos", "material"):
+            ramo = str(orden.get("ramo", "")).strip()
+            if not ramo:
+                return None, ("\u00bfDe qu\u00e9 ramo? Decime el nombre, por ejemplo "
+                              "\u00abmandame los archivos de c\u00e1lculo\u00bb.")
+            clave, aviso = self.buscar(ramo)
+            if not clave:
+                return None, aviso
+            desde = str(orden.get("desde", "") or "")[:10]
+            hasta = str(orden.get("hasta", "") or "")[:10]
+            nombre = str(orden.get("nombre", "") or "")[:80]
+            tipo = str(orden.get("tipo", "todo") or "todo").strip().lower()
+            if tipo not in GRUPOS_DE_TIPO:
+                tipo = "todo"
+            alcance = "" if (desde or hasta) else getattr(
+                CFG, "ALCANCE_POR_DEFECTO", "semana")
+            # Buscar, contar y medir es trabajo del programa.  La IA solo dijo
+            # ramo, fechas, nombre y tipo.
+            elegidos, total, rango = self.filtrar_archivos(
+                clave, alcance, desde, hasta, nombre, tipo)
+            if not elegidos:
+                texto = "En <b>%s</b> no encontr\u00e9 archivos %s." % (
+                    N.escapar(aviso), rango)
+                if nombre:
+                    texto += "\nBusqu\u00e9 por nombre: <b>%s</b>." % N.escapar(nombre)
+                if total:
+                    texto += "\nS\u00ed tengo %d en otras fechas." % total
+                return None, texto
+            plan = {"accion": "mandar_archivos", "clave": clave,
+                    "alcance": alcance, "desde": desde, "hasta": hasta,
+                    "nombre": nombre, "tipo": tipo}
+            return plan, self.texto_confirmar_archivos(clave, elegidos, rango)
+
         return None, ""
 
     def ejecutar_plan(self, plan):
@@ -1176,6 +1280,12 @@ class Vigilante(object):
         if que == "resumen":
             self.resumen_ramo(plan["clave"])
             return ""
+        if que == "mandar_archivos":
+            self.pedir_archivos(plan["clave"], plan.get("alcance") or "",
+                                plan.get("desde", ""), plan.get("hasta", ""),
+                                plan.get("nombre", ""), plan.get("tipo", "todo"),
+                                confirmado=True)
+            return ""
         if que == "hecho":
             t = self.estado.get("tareas", {}).get(plan["idt"])
             if not t:
@@ -1184,27 +1294,121 @@ class Vigilante(object):
             return "\u2705 Listo: <b>%s</b>." % N.escapar(t.get("titulo", ""))
         return "No supe qu\u00e9 hacer con eso."
 
-    def proponer(self, texto):
-        """Le hablas normal y hace cosas.  La IA solo traduce el pedido: el
-        que valida, arma la confirmacion y ejecuta es este programa."""
-        if not IA.disponible(self.estado):
-            self.preguntar(texto)          # ahi se explica por que no hay IA
-            return
-        avisar, cerrar = self.animar("Entendiendo")
-        avisar(CFG.ETAPAS["pensando"])
-        orden = IA.interpretar(self.estado, texto, self._contexto_orden())
-        accion = str((orden or {}).get("accion", "")).strip().lower()
-        if not orden or accion in ("", "ninguna"):
-            cerrar("\U0001F9E0 <i>%s</i>" % N.escapar(texto[:80]))
-            self.preguntar(texto)          # no era una orden: es una pregunta
-            return
-        plan, aviso = self.validar_orden(orden)
-        if not plan:
-            cerrar(aviso or "No entend\u00ed qu\u00e9 quer\u00e9s que haga.")
-            return
+    def orden_local(self, texto):
+        """Lo que el programa entiende SOLO, sin IA.
+
+        Sirve para dos cosas: que las ordenes anden con la IA apagada, y como
+        red cuando la IA contesta cualquier cosa.  Todo lo que sale de aca es
+        un pedido crudo, que despues pasa igual por validar_orden."""
+        crudo = str(texto or "").strip()
+        t = pelado(crudo)
+        if not t:
+            return None
+
+        for arranque in ("recordame", "recuerdame", "recordarme", "acordame",
+                         "avisame", "recorda"):
+            if t.startswith(arranque):
+                resto = crudo[len(arranque):].strip()
+                f, que = self._fecha_del_pedido(resto)
+                if not f:
+                    return None
+                que = re.sub(r"^(que|de|para)\s+", "", que.strip(), flags=re.I)
+                return {"accion": "recordar", "que": que,
+                        "cuando": f.strftime("%Y-%m-%d %H:%M")}
+
+        for arranque in ("mandame los archivos de", "mandame el material de",
+                         "pasame los archivos de", "mandame los pdf de",
+                         "buscame los archivos de"):
+            if t.startswith(arranque):
+                ramo = crudo[len(arranque):].strip()
+                if not ramo:
+                    return None
+                pedido = {"accion": "buscar_archivos", "ramo": ramo,
+                          "nombre": "", "tipo": "todo", "desde": "", "hasta": ""}
+                if "pdf" in t:
+                    pedido["tipo"] = "pdf"
+                return pedido
+
+        if t in ("seguir", "volve", "volvete", "segui"):
+            return {"accion": "seguir"}
+        if t in ("revisa", "revisar", "mira ahora", "revisa ahora"):
+            return {"accion": "revisar"}
+        m = re.match(r"^(pausa|callate|calla)\s*(\d+)?", t)
+        if m:
+            return {"accion": "pausa", "horas": float(m.group(2) or 3)}
+        return None
+
+    def _fecha_del_pedido(self, resto):
+        """La fecha puede venir al principio o al final.  Prueba las dos."""
+        f, que = comandos.cuando(resto, ahora())
+        if f:
+            return f, que
+        piezas = resto.split()
+        for i in range(len(piezas) - 1, -1, -1):
+            f, sobra = comandos.cuando(" ".join(piezas[i:]), ahora())
+            if f:
+                queda = piezas[:i] + ([sobra] if sobra else [])
+                return f, " ".join(queda)
+        return None, resto
+
+    def _pedir_confirmacion(self, plan, aviso, cerrar=None):
+        """Guarda el plan y muestra los dos botones.  El texto ya viene armado
+        por el programa: la IA nunca escribe una confirmacion."""
         self.estado["propuesta"] = {"plan": plan, "cuando": time.time()}
         self.guardar()
-        cerrar(aviso, N.teclado([[("\u2705 Dale", "prop:si"), ("\u274C No", "prop:no")]]))
+        botones = N.teclado([[("\u2705 Dale", "prop:si"), ("\u274C No", "prop:no")]])
+        if cerrar:
+            cerrar(aviso, botones)
+        else:
+            N.enviar(aviso, botones=botones)
+
+    def proponer(self, texto):
+        """Le hablas normal y hace cosas.  La IA solo traduce el pedido: el
+        que valida, arma la confirmacion y ejecuta es este programa.
+
+        Reglas que no se rompen mas:
+        - el texto crudo de la IA no se imprime nunca en este camino
+        - no te repito tu propio mensaje
+        - toda rama termina en un mensaje para vos
+        """
+        panel = N.teclado([[("\U0001F431 Panel", "p:raiz")]])
+        local = self.orden_local(texto)
+
+        if not IA.disponible(self.estado):
+            if local:
+                plan, aviso = self.validar_orden(local)
+                if plan:
+                    self._pedir_confirmacion(plan, aviso)
+                else:
+                    N.enviar(aviso or "No entend\u00ed el pedido.", botones=panel)
+                return
+            N.enviar("La IA est\u00e1 apagada, as\u00ed que no puedo interpretar lo que "
+                     "me escribiste: " + N.escapar(self.por_que_no_hay_ia()),
+                     botones=panel)
+            return
+
+        avisar, cerrar = self.animar("Entendiendo")
+        avisar(CFG.ETAPAS["pensando"])
+        orden = IA.interpretar(self.estado, texto, self._contexto_orden()) or {}
+        accion = str(orden.get("accion", "")).strip().lower()
+
+        if accion in ("", "ninguna"):
+            if local:
+                orden, accion = local, local["accion"]
+            else:
+                # No era una orden: es una pregunta.  Y la respuesta reemplaza
+                # a la animacion, no llega un mensaje nuevo.
+                self.preguntar(texto, cerrar=cerrar)
+                return
+
+        plan, aviso = self.validar_orden(orden)
+        if not plan and local and local.get("accion") != accion:
+            plan, aviso = self.validar_orden(local)
+        if not plan:
+            cerrar(aviso or ("No entend\u00ed qu\u00e9 quer\u00e9s que haga. Prob\u00e1 con "
+                             "el Panel o escrib\u00edmelo de otra forma."), panel)
+            return
+        self._pedir_confirmacion(plan, aviso, cerrar=cerrar)
 
     def confirmar_propuesta(self, si=True):
         """El boton de la confirmacion. Devuelve el texto final."""
@@ -1304,35 +1508,280 @@ class Vigilante(object):
             bloques.append("\n".join(filas))
         return "\n\n".join(bloques)
 
-    def cuantos_archivos(self, clave):
-        return len([n for n in self.estado.get("novedades", [])
-                    if n.get("c") == clave and n.get("tipo") == "archivo"])
-
-    def mandar_material(self, clave):
-        """Te deja los documentos del ramo en el chat, sin entrar a la pagina."""
-        g = self.estado.get("grupos", {}).get(clave, {})
-        nombre = g.get("nombre", "ese ramo")
-        archivos = [n for n in self.estado.get("novedades", [])
-                    if n.get("c") == clave and n.get("tipo") == "archivo"]
-        if not archivos:
-            N.enviar("En <b>%s</b> todav\u00eda no hay ning\u00fan documento para bajar."
-                     % N.escapar(nombre))
-            return
-        avisar, cerrar = self.animar("bajando los documentos de " + nombre)
+    # ---------------------------------------------- archivos de un ramo
+    def leer_ramo_ahora(self, clave):
+        """Vuelve a leer el ramo AHORA, entrando adentro de cada actividad y
+        pasando por el menu que se arma con javascript.  El boton de archivos
+        tiene que ver lo mismo que ve la deteccion automatica: antes uno
+        miraba la memoria y el otro la pagina, y por eso se contradecian."""
+        g = self.estado.get("grupos", {}).get(clave)
+        if not g:
+            return []
         s = self.sesiones.get(g.get("fuente"))
-        cuantos = 0
-        if s:
-            cuantos = self.mandar_adjuntos(
-                s, [{"url": n["u"], "titulo": n["t"]} for n in archivos[:8]]) or 0
-        if cuantos:
-            cerrar("\U0001F4E5 Te mand\u00e9 %d documento%s de <b>%s</b>."
-                   % (cuantos, "" if cuantos == 1 else "s", N.escapar(nombre)),
-                   N.teclado([[("\u2B05\uFE0F Volver", "p:r:" + clave)]]))
+        base = self.bases.get(g.get("fuente"))
+        if not s or not base:
+            return []
+        try:
+            # Que no me devuelva lo cacheado: quiero lo de este momento.
+            _ULTIMO_PROFUNDO.pop(g.get("id"), None)
+            _ULTIMO_PROFUNDO.pop(str(g.get("id")), None)
+        except Exception:
+            pass
+        try:
+            items, _ = explorar_ramo(s, base, {"id": g.get("id"),
+                                               "url": g.get("url"),
+                                               "nombre": g.get("nombre", "")})
+        except Exception as e:
+            log("[!] leyendo el ramo de nuevo: %s" % type(e).__name__)
+            return []
+        return items or []
+
+    def _fecha_heredada(self, url, fechas):
+        """Un adjunto que vive adentro de una actividad hereda la fecha de esa
+        actividad.  Sin esto, filtrar por fecha tiraba a la basura justo los
+        archivos que no tienen fecha propia."""
+        if url in fechas:
+            return fechas[url]
+        mejor, largo = "", 0
+        for u, f in fechas.items():
+            if u and url.startswith(u) and len(u) > largo:
+                mejor, largo = f, len(u)
+        return mejor
+
+    def archivos_del_ramo(self, clave, frescos=True):
+        """Todo lo que en este ramo se puede bajar de verdad.
+
+        Junta las dos listas que antes no coincidian: lo anotado en la memoria
+        y lo que hay ahora en la plataforma.  Un enlace sin extension, del
+        tipo /archivo/8891, tambien entra: para eso esta es_bajable."""
+        fechas = {}
+        for n in self.estado.get("novedades", []):
+            if n.get("c") == clave and n.get("u"):
+                fechas.setdefault(n["u"], n.get("f", ""))
+        salida = {}
+        for n in self.estado.get("novedades", []):
+            if n.get("c") != clave or not n.get("u"):
+                continue
+            if n.get("tipo") == "archivo" or es_bajable(n["u"], n.get("t", "")):
+                salida[n["u"]] = {"url": n["u"], "titulo": n.get("t") or "archivo",
+                                  "cuando": n.get("f", "")}
+        if frescos:
+            for it in self.leer_ramo_ahora(clave):
+                u = it.get("url") or ""
+                if not u or u in salida:
+                    continue
+                if not es_bajable(u, it.get("titulo", "")):
+                    continue
+                salida[u] = {"url": u, "titulo": it.get("titulo") or "archivo",
+                             "cuando": self._fecha_heredada(u, fechas)}
+        return sorted(salida.values(), key=lambda x: x.get("cuando") or "",
+                      reverse=True)
+
+    def cuantos_archivos(self, clave):
+        """El numero que muestra el panel.  Cuenta igual que el boton, asi que
+        no puede decir una cosa arriba y otra abajo."""
+        return len(self.archivos_del_ramo(clave, frescos=False))
+
+    def filtrar_archivos(self, clave, alcance=None, desde="", hasta="",
+                         nombre="", tipo="todo", frescos=True):
+        """Busca, filtra y cuenta.  Esto lo hace el programa, nunca la IA.
+        Devuelve (elegidos, cuantos_hay_en_total, como_se_dice_el_rango)."""
+        d, h = rango_de_fechas(alcance, desde, hasta)
+        todos = self.archivos_del_ramo(clave, frescos=frescos)
+        pedazo = pelado(nombre or "")
+        elegidos = []
+        for a in todos:
+            if pedazo and pedazo not in pelado(a.get("titulo", "")):
+                continue
+            if not de_este_tipo(tipo, a.get("titulo", ""), a.get("url", "")):
+                continue
+            if d:
+                cuando = (a.get("cuando") or "")[:10]
+                if not cuando or cuando < str(d) or cuando > str(h):
+                    continue
+            elegidos.append(a)
+        tope = getattr(CFG, "TOPE_ARCHIVOS_DE_UNA", 80)
+        return elegidos[:tope], len(todos), rango_lindo(d, h)
+
+    def _bajar_uno(self, s, a):
+        """Devuelve (crudo, motivo, respuesta).  Si crudo es None, el motivo
+        se cuenta en una linea: nada falla en silencio."""
+        try:
+            r = s.get(a["url"], timeout=CFG.ESPERA_RED)
+        except Exception as e:
+            return None, "no me pude conectar (%s)" % type(e).__name__, None
+        if r.status_code != 200:
+            return None, "la plataforma contest\u00f3 %s" % r.status_code, r
+        tipo = (r.headers.get("Content-Type") or "").lower()
+        pegado = (r.headers.get("Content-Disposition") or "").lower()
+        if "html" in tipo and "attachment" not in pegado:
+            # Aca es donde llegaba la pagina de ingreso disfrazada de archivo.
+            arranque = (r.text or "")[:4000].lower()
+            if "password" in arranque or "contrase" in arranque or "login" in arranque:
+                return None, "me devolvi\u00f3 la pantalla de ingreso, se cort\u00f3 la sesi\u00f3n", r
+            return None, "eso es una p\u00e1gina, no un archivo", r
+        if not r.content:
+            return None, "lleg\u00f3 vac\u00edo", r
+        return r.content, "", r
+
+    def peso_aproximado(self, clave, elegidos):
+        """Cuanto pesan, preguntando de a poco y sin bajar nada."""
+        g = self.estado.get("grupos", {}).get(clave, {})
+        s = self.sesiones.get(g.get("fuente"))
+        if not s:
+            return 0
+        total, mirados = 0, 0
+        for a in elegidos[:25]:
+            try:
+                r = s.head(a["url"], timeout=10, allow_redirects=True)
+                largo = int(r.headers.get("Content-Length") or 0)
+            except Exception:
+                continue
+            if largo > 0:
+                total += largo
+                mirados += 1
+        if mirados and len(elegidos) > mirados:
+            total = int(total * len(elegidos) / float(mirados))
+        return total
+
+    def texto_confirmar_archivos(self, clave, elegidos, rango):
+        """La confirmacion la escribe el programa, con numeros de verdad."""
+        peso = self.peso_aproximado(clave, elegidos)
+        lineas = ["\U0001F4E6 <b>Encontr\u00e9 %d archivo%s</b>"
+                  % (len(elegidos), "" if len(elegidos) == 1 else "s"),
+                  "Ramo: %s" % N.escapar(self.nombre_de(clave)),
+                  rango[0].upper() + rango[1:]]
+        if peso:
+            lineas.append("Pesan %s en total" % peso_lindo(peso))
+        tanda = max(1, getattr(CFG, "ARCHIVOS_POR_TANDA", 5))
+        if len(elegidos) > tanda:
+            lineas.append("Van por tandas de %d y te cuento el avance" % tanda)
+        lineas.append("<i>Estos n\u00fameros los cont\u00e9 yo, no la IA.</i>")
+        return "\n".join(lineas)
+
+    def pedir_archivos(self, clave, alcance=None, desde="", hasta="",
+                       nombre="", tipo="todo", confirmado=False):
+        """La puerta de entrada, venga de un boton o de un pedido hablado.
+        Siempre termina en un mensaje: o los archivos, o el motivo."""
+        if not self.estado.get("grupos", {}).get(clave):
+            N.enviar("Ese ramo ya no est\u00e1.")
+            return
+        titulo = self.nombre_de(clave)
+        elegidos, total, rango = self.filtrar_archivos(
+            clave, alcance, desde, hasta, nombre, tipo)
+
+        if not elegidos:
+            anotadas = len([n for n in self.estado.get("novedades", [])
+                            if n.get("c") == clave])
+            texto = "En <b>%s</b> no encontr\u00e9 archivos %s." % (
+                N.escapar(titulo), rango)
+            if nombre:
+                texto += "\nBusqu\u00e9 por nombre: <b>%s</b>." % N.escapar(nombre)
+            if total:
+                texto += "\nS\u00ed tengo %d en otras fechas." % total
+            elif anotadas:
+                texto += ("\nTengo %d cosa%s anotada%s del ramo, pero ninguna es "
+                          "un archivo que se pueda bajar."
+                          % (anotadas, "" if anotadas == 1 else "s",
+                             "" if anotadas == 1 else "s"))
+            else:
+                texto += "\nTodav\u00eda no vi nada en este ramo."
+            N.enviar(texto, botones=N.teclado([
+                [("\U0001F4C5 \u00daltimo mes", "a:baj:%s:mes" % clave),
+                 ("\U0001F5C2 Todo el ramo", "a:baj:%s:todo" % clave)],
+                [("\u2B05\uFE0F Volver", "p:r:" + clave)]]))
+            return
+
+        if not confirmado and len(elegidos) >= getattr(CFG, "PREGUNTAR_DESDE", 6):
+            self.estado["propuesta"] = {
+                "plan": {"accion": "mandar_archivos", "clave": clave,
+                         "alcance": alcance or "", "desde": desde or "",
+                         "hasta": hasta or "", "nombre": nombre or "",
+                         "tipo": tipo or "todo"},
+                "cuando": time.time()}
+            self.guardar()
+            N.enviar(self.texto_confirmar_archivos(clave, elegidos, rango),
+                     botones=N.teclado([[("\U0001F4E5 Mandalos", "prop:si"),
+                                         ("\u274C No", "prop:no")]]))
+            return
+
+        self.mandar_archivos(clave, elegidos, rango)
+
+    def mandar_archivos(self, clave, elegidos, rango=""):
+        """Los baja y los manda por tandas.  Nunca manda el mismo dos veces y
+        nunca deja una falla callada."""
+        g = self.estado.get("grupos", {}).get(clave, {})
+        titulo = g.get("nombre", "ese ramo")
+        s = self.sesiones.get(g.get("fuente"))
+        if not s:
+            N.enviar("No pude entrar a la plataforma de <b>%s</b> ahora, as\u00ed que "
+                     "no puedo bajar nada. Te dejo los enlaces:\n\n%s"
+                     % (N.escapar(titulo),
+                        "\n".join("\U0001F4C4 " + N.enlace(a["titulo"], a["url"])
+                                  for a in elegidos[:10])),
+                     botones=N.teclado([[("\u2B05\uFE0F Volver", "p:r:" + clave)]]))
+            return 0
+
+        total = len(elegidos)
+        avisar, cerrar = self.animar("archivos de " + titulo)
+        cada = max(1, getattr(CFG, "AVISAR_AVANCE_CADA", 10))
+        tope = CFG.PESO_ADJUNTO_MB * 1024 * 1024
+        mandados, repetidos, fallados, huellas = 0, 0, [], set()
+
+        for i, a in enumerate(elegidos, 1):
+            avisar("bajando %d de %d" % (i, total))
+            crudo, motivo, r = self._bajar_uno(s, a)
+            if crudo is None:
+                fallados.append((a, motivo))
+                continue
+            marca = hashlib.sha256(crudo).hexdigest()
+            if marca in huellas:
+                repetidos += 1
+                continue
+            huellas.add(marca)
+            if len(crudo) > tope:
+                fallados.append((a, "pesa %s y la mensajer\u00eda aguanta %d MB"
+                                 % (peso_lindo(len(crudo)), CFG.PESO_ADJUNTO_MB)))
+                continue
+            como = nombre_de_archivo(r, a["url"], a.get("titulo", "archivo"))
+            if N.mandar_documento(como, crudo, silencioso=True):
+                mandados += 1
+            else:
+                fallados.append((a, "la mensajer\u00eda no lo acept\u00f3"))
+            if mandados and mandados % cada == 0 and mandados < total:
+                avisar("van %d de %d" % (mandados, total))
+
+        lineas = []
+        if mandados:
+            lineas.append("\U0001F4E5 Te mand\u00e9 <b>%d</b> de %d archivo%s de <b>%s</b>"
+                          % (mandados, total, "" if total == 1 else "s",
+                             N.escapar(titulo)))
+            if rango:
+                lineas.append(rango[0].upper() + rango[1:])
         else:
-            cerrar("No pude bajarlos. Te dejo los enlaces:\n\n"
-                   + "\n".join("\U0001F4C4 " + N.enlace(n["t"], n["u"])
-                               for n in archivos[:10]),
-                   N.teclado([[("\u2B05\uFE0F Volver", "p:r:" + clave)]]))
+            lineas.append("No pude bajar ninguno de los %d archivos de <b>%s</b>."
+                          % (total, N.escapar(titulo)))
+        if repetidos:
+            lineas.append("%d era%s el mismo archivo repetido, no te lo mand\u00e9 dos veces."
+                          % (repetidos, "" if repetidos == 1 else "n"))
+        if fallados:
+            lineas.append("")
+            lineas.append("<b>Estos no pude:</b>")
+            for a, motivo in fallados[:8]:
+                lineas.append("\u26A0\uFE0F %s \u00b7 %s"
+                              % (N.enlace(a.get("titulo", "archivo"), a["url"]),
+                                 N.escapar(motivo)))
+            if len(fallados) > 8:
+                lineas.append("<i>y %d m\u00e1s</i>" % (len(fallados) - 8))
+        cerrar("\n".join(lineas),
+               N.teclado([[("\U0001F4C4 Ver material", "p:mat:" + clave)],
+                          [("\u2B05\uFE0F Volver", "p:r:" + clave)]]))
+        return mandados
+
+    def mandar_material(self, clave, alcance=None):
+        """El boton de siempre. Por defecto la ultima semana."""
+        self.pedir_archivos(clave, alcance or getattr(CFG, "ALCANCE_POR_DEFECTO",
+                                                     "semana"))
 
     def texto_novedades(self):
         mios = self.estado.get("novedades", [])[:12]
@@ -1426,6 +1875,12 @@ class Vigilante(object):
             "versi\u00f3n: <b>v%s</b> (%s)" % (getattr(VER, "VERSION", "?"),
                                               getattr(VER, "FECHA", "?")),
             "IA: %s" % d["ia"],
+            "claves de IA: %s" % IA.como_van_las_claves(self.estado),
+            salud.linea_de_estado(self.estado),
+            "compartiendo con: %d persona(s)" % len(self.estado.get("personas", {})),
+            "claves ajenas: %s" % compartir.resumen_de_claves(self.estado),
+            "clases por video detectadas: %d" % len(
+                self.estado.get("clases_avisadas", {})),
             "pausa: %s" % ("s\u00ed" if self.en_pausa() else "no"),
             "madrugada: %s" % ("sin sonido" if self.cfg().get("noche", True) else "suena"),
         ]
@@ -1456,13 +1911,15 @@ class Vigilante(object):
         """En una linea, por que no hay resumen."""
         if not self.cfg().get("ia", True):
             return "los res\u00famenes est\u00e1n apagados, prend\u00e9los con /ia on"
-        if self.estado.get("fallas_ia", 0) >= CFG.IA.get("fallas_para_apagar", 5):
-            motivo = self.estado.get("ultimo_error_ia", "")
-            return ("se apag\u00f3 sola por fallas (%s). Prend\u00e9la con /ia on"
-                    % motivo[:80]) if motivo else \
-                   "se apag\u00f3 sola por fallas. Prend\u00e9la con /ia on"
-        if not IA.disponible():
-            return "falta la clave de la IA"
+        if not IA.claves():
+            return ("no hay ninguna clave de IA cargada. Cargala en los Secrets "
+                    "como IA_KEY")
+        if not IA.disponible(self.estado):
+            return ("todas las claves est\u00e1n descansando \u00b7 %s"
+                    % IA.como_van_las_claves(self.estado))
+        motivo = self.estado.get("ultimo_error_ia", "")
+        if motivo:
+            return "%s. Prob\u00e1 de nuevo en un rato" % motivo[:100]
         return "no me lleg\u00f3 respuesta esta vez, prob\u00e1 de nuevo en un rato"
 
     # ---------------------------------------------------------- a pedido
@@ -1517,6 +1974,25 @@ class Vigilante(object):
             self.resumen_ramo(cual[5:])
         elif cual.startswith("bajar:"):
             self.mandar_material(cual[6:])
+        elif cual == "tocar":
+            self.despertar_reloj()
+        elif cual == "reloj":
+            texto = self.revisar_reloj(forzado=True)
+            if not texto:
+                N.enviar(salud.linea_de_estado(self.estado)
+                         + "\nTodo en orden, no hay nada que hacer.")
+        elif cual == "cerrar_compartir":
+            cuantos = compartir.cerrar_todo(self.estado)
+            N.enviar("\U0001F512 Listo, cerr\u00e9 %d permiso(s). Nadie ve nada "
+                     "tuyo hasta que lo vuelvas a abrir a mano." % cuantos)
+            self.guardar()
+        elif cual.startswith("baj:"):
+            # baj:<clave>:<alcance>  ->  semana, mes o todo
+            resto = cual[4:]
+            clave, _, alcance = resto.rpartition(":")
+            if not clave:
+                clave, alcance = resto, ""
+            self.pedir_archivos(clave, alcance or None)
 
     def _acciones(self):
         return {
@@ -1528,12 +2004,25 @@ class Vigilante(object):
             "ficha_ramo": self.ficha_ramo,
             "material": self.material,
             "cuantos_archivos": self.cuantos_archivos,
+            "pedir_archivos": self.pedir_archivos,
+            "buscar_por_nombre": lambda clave, texto: self.pedir_archivos(
+                clave, "todo", nombre=texto),
             "texto_novedades": lambda: self._memo("nov", self.texto_novedades),
             "texto_pendientes": lambda: self._memo("pen", self.texto_pendientes),
             "texto_semana": lambda: self._memo("sem", self.texto_semana),
             "texto_silenciados": self.texto_silenciados,
             "texto_diagnostico": self.texto_diagnostico,
             "texto_ayuda": comandos.texto_ayuda,
+            "texto_clases": self.texto_clases,
+            "texto_compartir": self.texto_compartir,
+            "texto_afuera": self.texto_afuera,
+            "personas": lambda: compartir.lista(self.estado),
+            "ramos_abiertos": lambda pid: compartir.ramos_abiertos(self.estado, pid),
+            "alternar_ramo": lambda pid, clave: compartir.alternar_ramo(
+                self.estado, pid, clave),
+            "sacar_persona": lambda pid: compartir.sacar(self.estado, pid),
+            "cerrar_todo": lambda pid=None: compartir.cerrar_todo(self.estado, pid),
+            "resumen_de_claves": lambda: compartir.resumen_de_claves(self.estado),
             "buscar": self.buscar,
             "resumen_ramo": self.resumen_ramo,
             "preguntar": self.preguntar,
@@ -1581,6 +2070,7 @@ class Vigilante(object):
         clave = os.environ.get(f["env_pass"], "")
         if not (base and usuario and clave):
             return None, None
+        self.bases[f["clave"]] = base
         if f["clave"] in self.sesiones:
             return self.sesiones[f["clave"]], base
         s = sesion()
@@ -1771,6 +2261,11 @@ class Vigilante(object):
                 "f": hoy.strftime("%Y-%m-%d %H:%M"), "c": clave, "g": nombre,
                 "t": n["titulo"], "u": n["url"], "tipo": n["tipo"]})
         del self.estado["novedades"][CFG.NOVEDADES_GUARDADAS:]
+
+        # Las clases por video van ANTES del silencio a proposito: perderse
+        # una clase no se arregla despues, y un ramo callado sigue teniendo
+        # clases.  Esta es la unica cosa que rompe el silencio.
+        self.clases_nuevas(clave, nombre, frescos, hoy)
 
         if self.callado(clave):
             ficha = self.estado["callados"][clave]
@@ -1992,6 +2487,227 @@ class Vigilante(object):
                  + "\n\n" + self.texto_pendientes(),
                  silencioso=self.en_silencio())
 
+    # =================================================================
+    #  clases por videoconferencia
+    # =================================================================
+    def clases_nuevas(self, clave, nombre, frescos, hoy=None):
+        """Mira lo que acaba de aparecer y busca clases por video.
+
+        Una clase con enlace se avisa SIEMPRE: aunque el ramo este callado y
+        aunque sea de madrugada.  Es la unica cosa del bot que rompe el
+        silencio, y lo hace a proposito.
+
+        Cada clase se avisa una sola vez.  Devuelve cuantas aviso.
+        """
+        if not getattr(CFG, "AVISAR_CLASES", True):
+            return 0
+        hoy = hoy or ahora()
+        avisadas = self.estado.setdefault("clases_avisadas", {})
+        cuantas = 0
+
+        for n in frescos or []:
+            titulo = n.get("titulo", "")
+            url = n.get("url", "")
+            descripcion = n.get("descripcion", "")
+            try:
+                ficha = clases.detectar(titulo, url, descripcion)
+            except Exception as e:
+                log("[!] mirando si era clase:", type(e).__name__)
+                continue
+            if not ficha:
+                continue
+            if not ficha.get("seguro") and not getattr(CFG, "CLASES_SIN_ENLACE", True):
+                continue
+
+            marca = huella("clase", clave, ficha.get("enlace") or url, pelado(titulo))
+            if marca in avisadas:
+                continue
+            avisadas[marca] = hoy.strftime("%Y-%m-%d %H:%M")
+
+            cuando = fecha_en_texto(" ".join([titulo, descripcion]), hoy)
+            lineas = clases.lineas_del_aviso(
+                ficha, ramo=nombre, titulo=titulo,
+                cuando=fecha_linda(cuando) if cuando else "",
+                escapar=N.escapar, enlace=N.enlace)
+            if not ficha.get("enlaces") and url:
+                lineas.append("\U0001F517 " + N.enlace("Abrir en la plataforma", url))
+
+            silencioso = (self.en_silencio()
+                          and not getattr(CFG, "CLASES_SUENAN_DE_NOCHE", True))
+            try:
+                N.enviar("\n".join(lineas), silencioso=silencioso)
+            except Exception as e:
+                log("[!] no pude avisar la clase:", type(e).__name__)
+                continue
+            cuantas += 1
+            log("[i] clase por video en %s (%s)" % (nombre, ficha.get("sala")))
+
+        # que la lista no crezca para siempre
+        if len(avisadas) > 400:
+            for k in list(avisadas)[:-400]:
+                avisadas.pop(k, None)
+        return cuantas
+
+    def texto_clases(self, cuantas=12):
+        """Las ultimas clases por video que detecte, para poder volver a
+        entrar al enlace sin buscarlo en el chat."""
+        vistas = self.estado.get("clases_avisadas", {})
+        if not vistas:
+            return ("Todav\u00eda no detect\u00e9 ninguna clase por videoconferencia.\n\n"
+                    "<i>Cuando alg\u00fan profe suba el enlace de un Meet, un Zoom o "
+                    "una sala virtual, te aviso al toque, aunque el ramo est\u00e9 "
+                    "silenciado y aunque sea de madrugada.</i>")
+        lineas = []
+        for n in self.estado.get("novedades", []):
+            ficha = None
+            try:
+                ficha = clases.detectar(n.get("t", ""), n.get("u", ""))
+            except Exception:
+                ficha = None
+            if not ficha or not ficha.get("seguro"):
+                continue
+            lineas.append("%s %s  <i>%s \u00b7 %s</i>" % (
+                clases.EMOJI, N.enlace(n.get("t", "la sala"), n.get("u", "")),
+                N.escapar(n.get("g", "")), n.get("f", "")[5:16].replace("-", "/")))
+            if len(lineas) >= cuantas:
+                break
+        if not lineas:
+            return ("Detect\u00e9 %d avisos de clase, pero ninguno con enlace "
+                    "todav\u00eda guardado." % len(vistas))
+        return "\n".join(lineas)
+
+    # =================================================================
+    #  el reloj de GitHub
+    # =================================================================
+    def revisar_reloj(self, forzado=False):
+        """GitHub apaga el horario programado a los 60 dias sin movimiento.
+        A los 50 avisa, y si puede lo arregla solo.  Una vez por dia."""
+        if not getattr(CFG, "REVISAR_RELOJ", True) and not forzado:
+            return ""
+        hoy = ahora()
+        if not forzado:
+            if self.estado.get("ultimo_reloj", "") == hoy.strftime("%Y-%m-%d"):
+                return ""
+            if hoy.strftime("%H:%M") < str(getattr(CFG, "HORA_REVISAR_RELOJ", "10:00")):
+                return ""
+            self.estado["ultimo_reloj"] = hoy.strftime("%Y-%m-%d")
+        try:
+            texto, botones = salud.revisar(
+                self.estado, hoy,
+                aviso=getattr(CFG, "DIAS_PARA_AVISAR_QUIETO", 50),
+                apaga=getattr(CFG, "DIAS_QUE_APAGA_GITHUB", 60),
+                arreglar_solo=getattr(CFG, "DESPERTAR_RELOJ_SOLO", True))
+        except Exception as e:
+            log("[!] no pude revisar el reloj:", type(e).__name__, e)
+            return ""
+        if texto:
+            N.enviar(texto, botones=N.teclado(botones) if botones else None)
+        return texto
+
+    def despertar_reloj(self):
+        """El boton: mueve el repositorio a mano y contesta que paso."""
+        bien, motivo = salud.tocar()
+        if bien:
+            self.estado["repo_movido"] = ahora().strftime("%Y-%m-%dT%H:%M:%SZ")
+            self.estado["repo_dias"] = 0
+            self.estado["repo_aviso"] = ""
+            self.estado["repo_toques"] = int(self.estado.get("repo_toques", 0)) + 1
+            N.enviar("\u2705 Listo, mov\u00ed el repositorio. La cuenta de los "
+                     "60 d\u00edas volvi\u00f3 a cero y sigo despertando normal.")
+        else:
+            N.enviar("\u26A0\uFE0F No pude moverlo: %s.\nCon que hagas cualquier "
+                     "cambio en el repositorio alcanza." % motivo)
+        self.guardar()
+        return bien
+
+    # =================================================================
+    #  material de otras secciones
+    # =================================================================
+    def nombre_de_ramo(self, clave):
+        return self.nombre_de(clave)
+
+    def avisar_de_afuera(self, pid, items):
+        """Llego material de otra seccion.  Una linea y se termina ahi.
+
+        Sin perfil, sin recordatorio de "no lo viste" y sin boton para
+        callarlo.  Lo que ya te mando tu propio profe no se avisa.
+        """
+        if not getattr(CFG, "COMPARTIR", True):
+            return 0
+        hoy = ahora()
+        try:
+            nuevos, repetidos = compartir.recibir(self.estado, pid, items, hoy)
+        except Exception as e:
+            log("[!] recibiendo de afuera:", type(e).__name__, e)
+            return 0
+        if repetidos:
+            log("[i] %d cosas de afuera ya las ten\u00eda" % repetidos)
+        if not nuevos:
+            return 0
+
+        resumen = ""
+        if getattr(CFG, "RESUMIR_LO_DE_AFUERA", True) and IA.disponible(self.estado):
+            resumen = self.resumir_de_afuera(nuevos)
+
+        tandas = [nuevos] if getattr(CFG, "AGRUPAR_LO_DE_AFUERA", True) \
+            else [[x] for x in nuevos]
+        for tanda in tandas:
+            texto = compartir.aviso_corto(tanda, escapar=N.escapar,
+                                          enlace=N.enlace, resumen=resumen)
+            if not texto:
+                continue
+            # Silencioso siempre: no es prioridad y no tiene que despertarte.
+            N.enviar(texto, silencioso=getattr(
+                CFG, "AVISOS_DE_AFUERA_SILENCIOSOS", True))
+        return len(nuevos)
+
+    def resumir_de_afuera(self, fichas):
+        """Una linea, no un informe.  Si la IA no contesta, no pasa nada:
+        el aviso va igual con el titulo, que es lo que importa."""
+        largo = int(getattr(CFG, "LARGO_RESUMEN_DE_AFUERA", 180))
+        titulos = "; ".join(str(x.get("t", ""))[:70] for x in fichas[:5])
+        pedido = ("En UNA sola frase de menos de %d caracteres, en castellano "
+                  "rioplatense, decime que subieron. No saludes, no expliques, "
+                  "no uses comillas. Esto es lo que subieron: %s"
+                  % (largo, titulos))
+        try:
+            salida = IA._pedir(self.estado, pedido)
+        except Exception:
+            return ""
+        salida = limpio(salida or "")
+        if not salida or len(salida) > largo * 2:
+            return ""
+        return salida[:largo]
+
+    def compartir_lo_mio(self, pid):
+        """Lo que esta persona puede ver de lo mio, ya filtrado y revisado.
+
+        Antes de devolver nada pasa por el control de salida: si aparece un
+        campo que no esta en la lista blanca, no sale NADA.  Prefiero no
+        compartir a compartir de mas.
+        """
+        try:
+            paquete = compartir.paquete_para(self.estado, pid)
+        except Exception as e:
+            log("[!] armando el paquete:", type(e).__name__, e)
+            return []
+        fugas = compartir.revisar_fuga(paquete)
+        if fugas:
+            log("[!] freno el envio, se colaron campos: %s" % ", ".join(fugas))
+            return []
+        ficha = compartir.persona(self.estado, pid)
+        if ficha:
+            ficha["mandados"] = int(ficha.get("mandados", 0)) + len(paquete)
+        return paquete
+
+    def texto_compartir(self):
+        return compartir.texto_personas(self.estado, nombre_de=self.nombre_de,
+                                        escapar=N.escapar)
+
+    def texto_afuera(self):
+        return compartir.texto_de_afuera(self.estado, escapar=N.escapar,
+                                         enlace=N.enlace)
+
     def latido(self):
         """Una linea por semana. Si un lunes no llega, algo pasa.
         Asi el silencio deja de ser ambiguo."""
@@ -2078,6 +2794,7 @@ class Vigilante(object):
         self.recordar_sin_ver()
         self.resumen_periodico()
         self.latido()
+        self.revisar_reloj()
         if self.estado.get("panel_id") and self.estado.get("panel_donde") == "p:raiz":
             self.dibujar_panel("p:raiz")
         self.guardar()
