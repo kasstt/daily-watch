@@ -543,7 +543,10 @@ def atender(estado, acc, ahora, espera=0):
             dato = cb.get("data", "")
             mensaje_id = (cb.get("message") or {}).get("message_id")
 
-            if dato.startswith(("hecho:", "dormir:", "nota:", "basta:")):
+            # "dormir1" faltaba en esta lista: el boton de posponer una hora
+            # caia al panel y le tapaba la tarjeta sin hacer nada.
+            if dato.startswith(("hecho:", "dormir:", "dormir1:", "nota:",
+                                "basta:")):
                 aviso, tarea_id = _boton_de_tarjeta(estado, dato, acc, ahora)
                 N.avisar_boton(cb.get("id"), aviso)
                 if tarea_id:
@@ -555,14 +558,27 @@ def atender(estado, acc, ahora, espera=0):
                 acc["accion"](dato[2:])
                 continue
 
-            # la confirmacion de una orden hablada
-            if dato in ("prop:si", "prop:no"):
-                N.avisar_boton(cb.get("id"), "Dale" if dato == "prop:si" else "Listo")
-                salida = acc["confirmar_propuesta"](dato == "prop:si")
+            # La confirmacion de una orden hablada.  La marca dice de QUE
+            # pedido era este boton: si quedaron dos preguntas sin contestar y
+            # el usuario aprieta la vieja, antes se ejecutaba la nueva.
+            if dato.startswith(("prop:si", "prop:no")):
+                si = dato.startswith("prop:si")
+                partes = dato.split(":")
+                marca = partes[2] if len(partes) > 2 else ""
+                N.avisar_boton(cb.get("id"), "Dale" if si else "Listo")
+                salida = acc["confirmar_propuesta"](si, marca)
                 if mensaje_id:
                     N.editar(mensaje_id, salida or "Listo.")
                 elif salida:
                     N.enviar(salida)
+                continue
+
+            # Un boton de una version anterior del bot no lo entiende nadie:
+            # antes se contestaba en blanco y se redibujaba el panel encima
+            # del mensaje viejo, asi que parecia que el bot se habia colgado.
+            if not P.reconoce(dato):
+                N.avisar_boton(cb.get("id"),
+                               "Ese bot\u00f3n es de un mensaje viejo")
                 continue
 
             aviso, donde = P.toque(estado, dato, acc, ahora)
