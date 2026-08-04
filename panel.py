@@ -584,6 +584,19 @@ def _rotar_perfil(actual):
         return CFG.PERFIL_POR_DEFECTO
 
 
+# Botones que el panel sabe atender hoy.  Todo lo que no este aca viene de un
+# mensaje viejo o de una version anterior del bot: hay que explicarselo al
+# usuario, no dibujarle el panel encima de la tarjeta que estaba mirando.
+PREFIJOS_CONOCIDOS = ("p:", "r:", "z:", "pv:", "pn:", "pb:",
+                      "rl:", "rm:", "rx:", "ql:", "qm:", "qx:",
+                      "tc:", "tq:", "t:", "c:si:", "d:", "h:")
+
+
+def reconoce(dato):
+    """Dice si ese boton corresponde a una pantalla que todavia existe."""
+    return str(dato or "").startswith(PREFIJOS_CONOCIDOS)
+
+
 def toque(estado, dato, acc, ahora):
     """Procesa un boton del panel.
     Devuelve (aviso_cortito, pantalla_a_dibujar)."""
