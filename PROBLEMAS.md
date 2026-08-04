@@ -6,7 +6,7 @@ archivos no. Si un dia le pedis ayuda a otra IA, pasale este archivo.
 Formato: fecha, que paso, estado.
 Estados: `abierto`, `en eso`, `resuelto`, `no se va a arreglar`.
 
-Al dia con la **v5.4**.
+Al dia con la **v5.6**.
 
 ---
 
@@ -75,6 +75,40 @@ las dos plataformas**.
 Estado: abierto.
 
 ---
+
+## Lo que se cerro en la v5.6
+
+Doce puntos que salieron de usar el bot de verdad. Todos verificados con
+`python3 _p18.py`.
+
+| # | Que pasaba | Que se hizo |
+|---|---|---|
+| 1 | Si cambiabas la clave, el bot fallaba callado y solo hablaba tras tres fallas seguidas | Aviso propio de clave rechazada, una vez por dia, y NO reintenta en bucle para no bloquear la cuenta |
+| 2 | El aviso de version solo decia el dia | Ahora dice la hora, y `version.py FECHA` la incluye |
+| 3 | Actualizabas y el bot seguia contestando la version vieja | No era el .bat. Era `cancel-in-progress: false` en el flujo: el push quedaba en la cola detras de un trabajo que seguia corriendo con el codigo viejo hasta 5,5 h. Ahora es `true`. Ademas el aviso mandaba y anotaba en el orden inverso |
+| 4 | Error de cupo de las claves de IA | Es el limite diario gratis del proveedor, no una falla. Lo que se arreglo es que las ordenes locales funcionen con la IA apagada |
+| 5 | Decia que no encontraba archivos de un ramo que si tiene cosas | Ese ramo tenia avisos escritos, no archivos. Al leer los avisos ahora se ve que son |
+| 6 | Los avisos escritos del profe eran invisibles | Modulo nuevo `avisos.py`. El bot solo miraba ENLACES y un aviso es texto sin enlace. Un aviso urgente rompe el silencio y suena de madrugada |
+| 7 | Pendientes era texto muerto: no se podia abrir, leer la nota ni marcar | Pantalla nueva con una fila por pendiente, ver nota, marcar, posponer y borrar |
+| 8 | Borrar, completar o posponer era instantaneo y sin retorno | Aviso del cambio mas boton Deshacer que restaura el estado anterior y desaparece al usarse. Borrar pregunta antes |
+| 9 | `/recordar` no funcionaba | Tres fallas: el id era por minuto y dos apuntes se pisaban, no se marcaba `es_tarea: False` y caian en PARA ENTREGAR, y no se guardaba |
+| 10 | Para crear un recordatorio habia que escribir comandos | Boton Nuevo recordatorio en la pantalla principal, atajos y opcion Otra hora |
+| 11 | Un enlace a la plataforma abre sin pedir login | Es la cookie de sesion del navegador, explicado abajo. No es una falla del bot |
+| 12 | Tres veces por dia avisaba que cambio algo sin que hubiera nada | `RE_VOLATIL` mucho mas amplia, detector de paginas que oscilan, dos revisiones seguidas antes de avisar y tope de uno por dia |
+
+## Lo que quedo advertido en la v5.6, no es una falla
+
+- **El cupo de la IA.** El proveedor da una cantidad de pedidos gratis por dia
+  por clave. Cuando se agotan, el bot descansa y vuelve solo. Se pueden cargar
+  hasta cinco claves. No se pierde nada de lo que vigila: los avisos, los
+  archivos y los recordatorios no usan IA.
+- **El enlace que abre sin pedir clave.** Es el navegador, que ya tiene la
+  sesion abierta. El enlace no lleva usuario ni clave adentro. En una maquina
+  ajena pide login normalmente. El riesgo real es dejar la sesion abierta en
+  un equipo compartido.
+- **`cancel-in-progress` en el flujo de trabajo.** Tiene que quedar en `true`.
+  En `false`, un push no toma efecto hasta que termine el trabajo anterior, y
+  eso puede tardar horas.
 
 ## Resueltos
 
@@ -170,3 +204,93 @@ No son problemas, son cosas que quedaron pensadas y sin hacer.
 - exportar los pendientes a un calendario
 - emojis animados propios: la mensajeria los cobra carisimo, descartado por
   ahora
+
+---
+
+## Auditoría de la v5.7 — el bot completo
+
+Revisión línea por línea de los 10.000+ renglones, no solo de lo nuevo.
+Cada punto es una falla que estaba y ya está arreglada. Están acá para que
+no vuelvan a entrar por la puerta de atrás.
+
+### Las que te hacían perder información
+
+1. **Cortar mensajes a lo bruto.** `texto[:4000]` podía partir el texto al
+   medio de un `<b>` o de un `&amp;`. La plataforma entonces rechaza el
+   mensaje ENTERO, no la parte cortada. Resultado: el mensaje no llegaba y
+   nadie se enteraba. Le pegaba justo al resumen semanal, que es el más largo.
+   Ahora `notificar.cortar()` no corta dentro de una etiqueta ni de un
+   símbolo, y cierra lo que quedó abierto. Además, si el formato falla, se
+   reintenta el mensaje pelado: mejor sin negritas que perdido.
+2. **Posponer una entrega del profe la duplicaba.** El botón `+1 hora` le
+   cambiaba el id a `mio_<hora>` a CUALQUIER pendiente. La identidad de una
+   entrega del profe es su huella: al renombrarla, el bot la perdía de vista y
+   en la revisión siguiente la anotaba como nueva. Quedaban dos, y con la
+   fecha del profe cambiada. **Nunca re-llavear un pendiente que vino de la
+   plataforma.** Ahora solo se duerme el recordatorio.
+3. **Los avisos del profe no se archivaban nunca.** Un aviso no tiene fecha
+   de entrega, así que nunca entraba en la limpieza. En un semestre la lista
+   de Pendientes quedaba inservible. Ahora se archivan solos a los 21 días
+   (`DIAS_PARA_ARCHIVAR_AVISOS`), usando el campo nuevo `nacio`.
+
+### Las que te iban a molestar de más
+
+4. **Todo era urgente.** `PALABRAS_URGENTES` tenía "prueba", "entrega",
+   "control", "plazo" y "asistencia", que aparecen en casi todos los avisos.
+   O sea: todo iba a sonar a las 3 de la mañana. Una alarma que suena siempre
+   se apaga, y el día que se apaga te perdés la suspensión de verdad. Ahora
+   hay dos niveles: nivel 1 te cambia el día y suena; nivel 2 se marca pero
+   espera la mañana. Interruptor: `IMPORTANTES_SUENAN_DE_NOCHE`.
+5. **`MINUTOS_PARA_DESHACER` estaba definido y NO se usaba.** El botón
+   Deshacer sobrevivía horas. **Una opción de configuración escrita y sin usar
+   es un error, no una función pendiente.**
+6. **La campanita callaba un ramo dos semanas de un solo toque**, al lado del
+   botón "ya está", sin decir hasta cuándo y sin vuelta atrás. Ahora avisa la
+   fecha de término y se puede deshacer.
+
+### Las que se veían roto
+
+7. **No se le podía hablar normal.** `if "pendientes" in plano` hacía que
+   cualquier frase con esa palabra —"que pendientes tengo?"— se tratara como
+   si hubieras apretado el botón. **El teclado fijo se compara por texto
+   EXACTO, nunca por subcadena.**
+8. **`/avisos` ordenaba por id**, que es `"aviso_" + hash`. Orden de azar.
+   Ahora ordena por `nacio`, el más nuevo arriba.
+9. **La admiración roja la llevaban todos los avisos**, así que no distinguía
+   nada. Ahora es solo para los urgentes de verdad.
+10. **Ajustes había perdido la única puerta a "Cuándo te hablo"**, y con ella
+    el acceso a `p:dia` y `p:hora`. No había forma de cambiar el día ni la
+    hora del resumen. **Toda pantalla necesita al menos un botón que lleve a
+    ella; si no, existe pero es inalcanzable.**
+11. **El diagnóstico mostraba el diccionario crudo** de la falla.
+12. **Botones recortados.** `teclado()` hacía `d[:64]`. Un dato recortado
+    apunta a OTRA cosa: el botón hacía algo distinto de lo que decía. **Si no
+    cabe, el botón no se pone.**
+13. **`sacar_basura` tiraba los mensajes sobrantes de la lista sin borrarlos**
+    del chat, así que quedaban ahí para siempre.
+14. **`_escribir_local` sin try.** Un disco lleno reventaba la corrida entera
+    en la última línea, con todo el trabajo ya hecho.
+
+### Trampas de programación que encontré (valen para cualquier cambio futuro)
+
+- **Una variable local puede tapar un módulo importado.** En
+  `avisos_de_plazo` había un local llamado `avisos`, y arriba hay
+  `import avisos`. Cualquier `avisos.algo()` dentro de esa función reventaba.
+  **Nunca le pongas a una variable el nombre de un módulo.**
+- **Agregar un tipo nuevo de deshacer exige una rama nueva en
+  `panel._deshacer`.** La cola genérica asume que el id es de una tarea. Mi
+  propio deshacer de la campanita pasaba una clave de ramo y creaba un
+  pendiente fantasma. Lo cazó `_p19.py`.
+- **Una pantalla rota NO se detecta contando filas de botones.** Muchas
+  pantallas de solo lectura tienen una sola fila con Volver y están perfectas.
+  La señal real es el texto literal `"se rompi"` que devuelve
+  `panel.pantalla`.
+- **Nunca escribas el número de versión en una prueba.** Comparalo contra
+  `VER.VERSION`. Ya rompió dos veces.
+- **Un `replacements: 1` no garantiza que el cambio quedó.** Verificá con
+  `grep` o volviendo a correr las pruebas.
+- **Mandá primero, marcá después.** Nunca pongas la marca de "ya avisé" antes
+  de que el envío devuelva un id.
+- **Cuidado con las pruebas que miran el código fuente:** los comentarios
+  explican cómo era antes, así que contienen el texto viejo a propósito. Hay
+  que sacar los comentarios antes de buscar.
