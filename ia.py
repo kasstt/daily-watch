@@ -308,19 +308,53 @@ def _descansando(estado, c):
         return ""
     minutos = int(falta / 60) + 1
     if motivo == "cupo":
-        return "sin cupo, vuelve en %d min" % minutos
+        return "sin cupo, %s" % _en_cuanto(falta)
     if motivo == "cansada":
         return "fallo muchas veces, vuelve en %d min" % minutos
     return "se cayo, vuelve en %d min" % minutos
 
 
-def _penitencia(estado, c, motivo):
+def _en_cuanto(segundos):
+    """Cuanto falta, dicho como lo diria una persona."""
+    minutos = int(segundos / 60) + 1
+    if minutos < 90:
+        return "vuelve en %d min" % minutos
+    if segundos < 20 * 3600:
+        return "vuelve en %d horas" % int(round(segundos / 3600.0))
+    return "vuelve ma\u00f1ana"
+
+
+def _segundos_hasta_manana():
+    """Lo que falta para que se renueve el cupo del dia, en la hora de casa."""
+    try:
+        import datetime as _dt
+        from zoneinfo import ZoneInfo
+        aca = _dt.datetime.now(ZoneInfo(getattr(CFG, "ZONA_HORARIA", "UTC")))
+        manana = (aca + _dt.timedelta(days=1)).replace(
+            hour=0, minute=10, second=0, microsecond=0)
+        return max(60, int((manana - aca).total_seconds()))
+    except Exception:
+        return 6 * 3600
+
+
+def _es_cupo_del_dia(detalle):
+    """Un rechazo por cupo puede ser "me pegaste muy seguido" o "se te acabo
+    lo del dia".  No es lo mismo: por el primero conviene esperar un rato, por
+    el segundo no vale la pena insistir hasta que cambie el dia."""
+    d = str(detalle or "").lower()
+    return any(p in d for p in ("per day", "perday", "por dia", "daily",
+                                "por hoy", "quota", "cuota", "requests per"))
+
+
+def _penitencia(estado, c, motivo, detalle=""):
     ficha = _fichas(estado).setdefault(c["nombre"], {})
     if ficha.get("marca") != _marca(c["clave"]):
         ficha.clear()
     fallas = ficha.get("fallas", 0) + 1
     if motivo == "cupo":
         espera = CFG.IA.get("descanso_cupo_minutos", 60) * 60
+        if CFG.IA.get("cupo_hasta_manana", True) and _es_cupo_del_dia(detalle):
+            espera = max(espera, _segundos_hasta_manana())
     elif motivo == "mala":
         espera = 0
     else:
@@ -351,6 +385,38 @@ def como_van_las_claves(estado=None):
     return " \u00b7 ".join(partes)
 
 
+def cuando_vuelve(estado=None):
+    """Por que no hay resumen ahora, dicho para el dueno del bot.
+
+    /estado muestra el detalle clave por clave.  Esto es la version corta que
+    va en un mensaje cualquiera: sin numeros de clave, sin nombres de
+    variables y diciendo cuando conviene volver a probar."""
+    lista = claves()
+    if not lista:
+        return "no tengo ninguna clave de IA guardada"
+    peor, cupo, mala = 0, False, False
+    for c in lista:
+        ficha = _fichas(estado).get(c["nombre"]) or {}
+        if ficha.get("marca") != _marca(c["clave"]):
+            return "puedo intentarlo de nuevo"
+        if ficha.get("motivo") == "mala":
+            mala = True
+            continue
+        falta = ficha.get("hasta", 0) - time.time()
+        if falta <= 0:
+            return "puedo intentarlo de nuevo"
+        peor = max(peor, falta)
+        if ficha.get("motivo") == "cupo":
+            cupo = True
+    if cupo and peor > 3 * 3600:
+        return "hoy ya se me acab\u00f3 el cupo de res\u00famenes, vuelve ma\u00f1ana"
+    if peor:
+        return "estoy descansando un rato, %s" % _en_cuanto(peor)
+    if mala:
+        return "la clave de IA que tengo no sirve, hay que cambiarla"
+    return "no puedo resumir en este momento"
+
+
 def _pedir(estado, texto, pdfs=()):
     """Prueba las claves en orden y devuelve la primera respuesta buena.
 
@@ -364,25 +430,26 @@ def _pedir(estado, texto, pdfs=()):
     for i, c in enumerate(lista, 1):
         quieta = _descansando(estado, c)
         if quieta:
-            motivos.append("clave %d %s" % (i, quieta))
+            # Al dueno no le sirve saber CUAL de las claves fue, solo por que.
+            motivos.append(quieta.split(",")[0])
             continue
         motor = PROVEEDORES.get(c.get("proveedor") or CFG.IA["proveedor"])
         if not motor:
-            motivos.append("clave %d con un proveedor que no conozco" % i)
+            motivos.append("mal configurada")
             continue
         try:
             salida = motor(texto, list(pdfs or []), c)
         except SinCupo as e:
-            _penitencia(estado, c, "cupo")
-            motivos.append("clave %d sin cupo" % i)
+            _penitencia(estado, c, "cupo", str(e))
+            motivos.append("sin cupo")
             continue
         except ClaveMala as e:
             _penitencia(estado, c, "mala")
-            motivos.append("clave %d no sirve" % i)
+            motivos.append("no sirve")
             continue
         except Exception as e:
             _penitencia(estado, c, "red")
-            motivos.append("clave %d se cayo (%s)" % (i, type(e).__name__))
+            motivos.append("se cay\u00f3")
             continue
         _anduvo(estado, c)
         if estado is not None:
@@ -391,7 +458,15 @@ def _pedir(estado, texto, pdfs=()):
         return salida
     if estado is not None:
         estado["ia_sin_claves"] = True
-    raise RuntimeError("no me quedan claves. " + ", ".join(motivos)[:180])
+    # Este texto lo lee el dueno, asi que va sin jerga y diciendo que hacer.
+    # Ordenados y sin repetir: "sin cupo, sin cupo, sin cupo" no dice mas.
+    resumen = ", ".join(sorted(set(m for m in motivos if m)))[:120] or "no pudo"
+    if len(lista) == 1:
+        raise RuntimeError("mi \u00fanica clave de IA no puede ahora: %s. Con una "
+                           "segunda clave de repuesto esto casi no te pasar\u00eda"
+                           % resumen)
+    raise RuntimeError("mis %d claves de IA no pueden ahora: %s"
+                       % (len(lista), resumen))
 
 
 def disponible(estado=None):
