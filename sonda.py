@@ -562,7 +562,13 @@ def main():
         escribir("ramos activos : %d | ramos viejos : %d | tardo %.1f s"
                  % (len(grupos or {}), len(viejos or {}), time.time() - t0))
 
-        for clave_g, ficha in list((grupos or {}).items()):
+        # Las plataformas devuelven la LISTA de ramos, no un fichero
+        # con llaves.  Aceptamos las dos formas para que la sonda no se
+        # caiga justo al final, despues de haber trabajado una hora.
+        fichas = grupos or []
+        if isinstance(fichas, dict):
+            fichas = list(fichas.values())
+        for ficha in fichas:
             try:
                 informe_de_ramo(W, CFG, s, base, ficha, etiqueta)
             except Exception as e:
