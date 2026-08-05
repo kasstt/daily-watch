@@ -311,3 +311,28 @@ DIAS_PARA_PODAR_HUELLAS = 400
 # Cuantos pendientes ya cerrados se conservan.  Los viejos no le sirven a
 # nadie y solo hacen mas pesada la memoria.
 PENDIENTES_CERRADOS_GUARDADOS = 300
+
+
+# ---------------------------------------------------------------- v5.9
+# Como llega el material cuando pedis los archivos de un ramo.
+# "auto": pocos archivos llegan sueltos, en su formato de siempre, y muchos
+# llegan juntos en un solo paquete para no tapar el chat.
+# "suelto": siempre uno por uno.   "paquete": siempre todo junto.
+MODO_ENVIO_MATERIAL = "auto"
+SUELTOS_HASTA = 4                # hasta esta cantidad van sueltos
+NOMBRE_DEL_PAQUETE = "material"  # se le suma el ramo y la fecha
+
+# Cuando el enlace no dice si es un archivo o una pagina, le preguntamos al
+# servidor antes de decir que no hay nada.  Esto es lo que hacia que un ramo
+# lleno de material apareciera vacio.
+COMPROBAR_DUDOSOS = True
+DUDOSOS_POR_PEDIDO = 25          # cuantos comprueba de una, para no colgarse
+HORAS_QUE_VALE_LA_COMPROBACION = 72
+
+# El dueño eligio: insistir hasta que lo marque visto, no un empujon solo.
+INSISTIR_HASTA_VISTO = True
+VECES_PARA_RECORDAR_VISTO = 4    # tope de empujones por cosa, para no cansar
+
+# Primer arranque con la memoria vacia: un resumen corto de lo que encontro.
+RESUMEN_DE_PRIMERA_VEZ = True
+COSAS_EN_EL_RESUMEN_INICIAL = 8
