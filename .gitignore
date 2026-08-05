@@ -6,3 +6,7 @@ __pycache__/
 .DS_Store
 respaldos/
 *.zip
+
+# La memoria del bot: nunca al repositorio.
+estado/
+visto.json
