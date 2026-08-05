@@ -60,6 +60,17 @@ jobs:
           CLAVE_COMPARTIR: ${{ secrets.CLAVE_COMPARTIR }}
           GIST_ID: ${{ secrets.GIST_ID }}
           IA_KEY: ${{ secrets.IA_KEY }}
+          # Las claves de repuesto tambien tienen que llegar al programa: si
+          # no se pasan aca, adentro solo existe la primera y el relevo nunca
+          # ocurre, asi que al agotarse la titular se queda sin resumenes.
+          IA_KEY_2: ${{ secrets.IA_KEY_2 }}
+          IA_KEY_3: ${{ secrets.IA_KEY_3 }}
+          IA_KEY_4: ${{ secrets.IA_KEY_4 }}
+          IA_KEY_5: ${{ secrets.IA_KEY_5 }}
+          IA_KEYS: ${{ secrets.IA_KEYS }}
+          IA_KEY_2_PROVEEDOR: ${{ secrets.IA_KEY_2_PROVEEDOR }}
+          IA_KEY_2_MODELO: ${{ secrets.IA_KEY_2_MODELO }}
+          IA_KEY_2_URL: ${{ secrets.IA_KEY_2_URL }}
         run: python watcher.py
 
       # Si la memoria vive en el gist, esto casi nunca tiene nada que subir.
