@@ -348,8 +348,12 @@ def _es_cupo_del_dia(detalle):
     lo del dia".  No es lo mismo: por el primero conviene esperar un rato, por
     el segundo no vale la pena insistir hasta que cambie el dia."""
     d = str(detalle or "").lower()
-    return any(p in d for p in ("per day", "perday", "por dia", "daily",
-                                "por hoy", "quota", "cuota", "requests per"))
+    # OJO: la palabra "quota" viene en TODOS los rechazos, incluido el de
+    # "vas muy rapido".  Tenerla aca hacia que un apuro de un minuto dejara
+    # al dueno sin IA hasta el otro dia.
+    return any(p in d for p in ("per day", "perday", "per-day", "por dia",
+                                "por d\u00eda", "daily", "por hoy",
+                                "limite diario", "l\u00edmite diario"))
 
 
 def _penitencia(estado, c, motivo, detalle=""):
@@ -370,6 +374,10 @@ def _penitencia(estado, c, motivo, detalle=""):
         motivo, espera = "cansada", max(espera, 6 * 3600)
     ficha.update({"marca": _marca(c["clave"]), "motivo": motivo,
                   "fallas": fallas, "hasta": time.time() + espera})
+    # Guardamos QUE dijo el servicio, corto y sin la clave, para que la
+    # pantalla de prueba pueda explicarlo en vez de decir solo "no pude".
+    if detalle:
+        ficha["detalle"] = sin_la_clave(str(detalle))[:160]
 
 
 def _anduvo(estado, c):
@@ -522,6 +530,7 @@ def _gemini(texto, pdfs, c=None):
     modelos = [preferido] + [m for m in CFG.IA.get("modelos_de_repuesto", [])
                              if m != preferido]
     ultimo = ""
+    sin_cupo = []
     for modelo in modelos:
         url = ("https://generativelanguage.googleapis.com/v1beta/models/"
                "%s:generateContent" % modelo)
@@ -540,20 +549,59 @@ def _gemini(texto, pdfs, c=None):
                 raise RuntimeError("contesto vacio, puede ser el filtro de contenido")
         ultimo = _motivo(r, modelo)
         if r.status_code == 429:
-            raise SinCupo(ultimo)              # esta clave descansa un rato
+            # El cupo gratis se cuenta POR MODELO.  Antes alcanzaba con que
+            # el modelo preferido viniera sin lugar para que la clave
+            # quedara castigada sin siquiera probar los de repuesto, que
+            # muchas veces si tienen cupo.  Por eso el dueno veia "sin
+            # cupo" para siempre aunque cambiara la clave.
+            sin_cupo.append(ultimo)
+            continue
         if r.status_code in (400, 401, 403):
             if r.status_code in (401, 403) or "clave" in ultimo:
                 raise ClaveMala(ultimo)        # esta no se reintenta sola
             break                              # es la clave, cambiar de modelo no ayuda
+    if sin_cupo and len(sin_cupo) == len(modelos):
+        raise SinCupo(sin_cupo[-1])            # recien ahora descansa
+    if sin_cupo:
+        # Unos sin lugar y otro roto: eso no es quedarse sin cupo, asi que
+        # no la castigamos por un dia entero.
+        raise SeCayo(sin_cupo[-1])
     raise SeCayo(ultimo or "no contesto")
+
+
+def sin_la_clave(t):
+    """Ningun pedazo de clave puede terminar en el chat, ni dentro de un
+    mensaje de error copiado del servicio."""
+    t = re.sub(r"AIza[0-9A-Za-z\-_]{8,}", "(clave)", str(t or ""))
+    return re.sub(r"AQ\.[0-9A-Za-z\-_.]{8,}", "(clave)", t)
+
+
+def _cupo_en_cero(error):
+    """.El servicio dice que para este modelo tu clave tiene cupo CERO?
+
+    No es lo mismo que haberse pasado: por mas que esperes no vuelve nunca,
+    hay que usar otro modelo.  Decirle al dueno "volve manana" en ese caso
+    es mandarlo a esperar algo que no va a pasar."""
+    try:
+        for pieza in (error.get("details") or []):
+            if not isinstance(pieza, dict):
+                continue
+            for viol in (pieza.get("violations") or []):
+                if isinstance(viol, dict) and str(
+                        viol.get("quotaValue", "")).strip() == "0":
+                    return True
+    except Exception:
+        pass
+    return False
 
 
 def _motivo(r, modelo=""):
     """El error de verdad, en castellano, para no adivinar."""
     try:
-        detalle = str((r.json().get("error") or {}).get("message", ""))[:200]
+        error = r.json().get("error") or {}
     except Exception:
-        detalle = ""
+        error = {}
+    detalle = sin_la_clave(str(error.get("message", "")))[:200]
     if r.status_code in (401, 403):
         return "la clave no sirve o no tiene permiso. %s" % detalle
     if r.status_code == 400 and "api key" in detalle.lower():
@@ -561,7 +609,10 @@ def _motivo(r, modelo=""):
     if r.status_code == 404:
         return "el modelo %s no existe para tu clave. %s" % (modelo, detalle)
     if r.status_code == 429:
-        return "te pasaste del limite gratis por hoy. %s" % detalle
+        if _cupo_en_cero(error):
+            return ("el modelo %s no tiene nada de cupo gratis para tu clave. "
+                    "%s" % (modelo, detalle))
+        return "me pase del limite de a ratos. %s" % detalle
     return "error %s. %s" % (r.status_code, detalle)
 
 
