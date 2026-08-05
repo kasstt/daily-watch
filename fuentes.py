@@ -336,3 +336,28 @@ VECES_PARA_RECORDAR_VISTO = 4    # tope de empujones por cosa, para no cansar
 # Primer arranque con la memoria vacia: un resumen corto de lo que encontro.
 RESUMEN_DE_PRIMERA_VEZ = True
 COSAS_EN_EL_RESUMEN_INICIAL = 8
+
+
+# =====================================================================
+#  v6.0 - lo que se aprendio mirando la plataforma de verdad
+# =====================================================================
+
+# Una de las plataformas publica un boton "Descargar Todo" que entrega UN
+# solo archivo comprimido con todo el modulo adentro.  Si el bot te lo
+# mandaba tal cual, pedias dos apuntes y recibias algo que hay que abrir en
+# el computador.  Con esto el bot lo abre por vos y te manda lo de adentro.
+DESARMAR_PAQUETES = True
+
+# Si adentro del paquete hay mas que esto, te lo dejo cerrado: son
+# demasiados mensajes seguidos.
+ARCHIVOS_DE_UN_PAQUETE = 25
+
+# Quien puede usar el bot.  Con esto en True, cualquiera que le escriba y no
+# este autorizado queda afuera, y a vos te llega el aviso con los botones
+# para dejarlo entrar o bloquearlo.
+SOLO_GENTE_AUTORIZADA = True
+AVISAR_DESCONOCIDOS = True
+MAXIMO_AUTORIZADOS = 8
+# Cuantas veces te aviso del MISMO desconocido antes de callarme (para que
+# nadie te pueda llenar el chat escribiendole al bot).
+AVISOS_POR_DESCONOCIDO = 1
