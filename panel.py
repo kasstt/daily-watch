@@ -642,7 +642,15 @@ def pantalla(estado, donde, acc):
             return acc["texto_version"](), N.teclado([
                 [("\u2B05\uFE0F Volver", "p:ajustes")]])
     except Exception as e:
-        return ("Algo se rompi\u00f3 dibujando esto (%s)." % type(e).__name__,
+        # El nombre tecnico del error no puede llegar al chat: el dueno no
+        # programa.  Se anota aparte, para el diagnostico, y en pantalla va
+        # algo que se entienda y diga que hacer.
+        try:
+            estado["ultimo_error_panel"] = "%s: %s" % (type(e).__name__, e)
+        except Exception:
+            pass
+        return ("No pude dibujar esta pantalla. Prob\u00e1 de nuevo en un "
+                "momento; si sigue igual avisame y la reviso.",
                 N.teclado([[("\u2B05\uFE0F Volver", "p:raiz")]]))
     return _raiz(estado, acc)
 
