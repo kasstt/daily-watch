@@ -1,263 +1,541 @@
 # -*- coding: utf-8 -*-
-"""SONDA: mira las plataformas de arriba abajo y escribe un informe.
+"""Sonda v2: el mapa completo de las plataformas.
 
-Se corre UNA vez, en tu computadora, parado en la carpeta del bot:
+Que hace, en una linea: entra igual que el bot, recorre TODO lo que
+encuentra --portada del ramo, cada seccion, cada enlace de adentro, los
+paquetes que arma la propia plataforma-- y escribe un informe largo en
+sonda.txt.
 
-    python sonda.py
+Por que existe: el bot solo cuenta lo que entendio.  Cuando el bot dice "no
+hay archivos" y vos ves archivos en la pagina, hace falta ver la pagina con
+los ojos del bot, sin filtrar nada.  De eso se trata esto.
 
-Que hace:
-  - entra a las dos plataformas con los datos de mis_datos.txt
-  - recorre cada ramo entero, tambien lo que vive adentro de las actividades
-  - por cada enlace que no dice de que es, le pregunta al servidor que hay
-    detras (solo pregunta, no baja nada)
-  - escribe todo en sonda.txt
+Tres reglas que no se rompen:
+  1. NO toca la memoria del bot, no manda mensajes y no baja material a
+     ningun lado.  Solo mira y escribe un archivo de texto.
+  2. Ningun dato tuyo aparece en el informe: usuario, clave, direcciones,
+     correo y el nombre de la universidad salen tapados.
+  3. Si algo falla, lo anota y sigue.  Nunca se corta a la mitad.
 
-Que NO hace: no te manda mensajes, no entrega archivos, no borra nada, no
-toca la memoria del bot y no escribe ni una letra en las plataformas.
+Se usa asi, en la misma carpeta del bot y con tu mis_datos.txt al lado:
 
-sonda.txt sale anonimo: las direcciones quedan como PLATAFORMA_A y
-PLATAFORMA_B, y tu usuario y tu clave nunca aparecen.  Igual conviene abrirlo
-y mirarlo antes de mandarlo.
+    python3 sonda.py
+
+Y despues me pasas el archivo sonda.txt que queda al lado.
 """
+
+import io
 import os
 import re
-import sys
 import time
-
-import secretos
+import zipfile
+import collections
 
 SALIDA = "sonda.txt"
 LINEAS = []
-
-# Cada cosa que no puede aparecer en el informe, con el nombre que va en su
-# lugar.  Se tapan por largo, primero las mas largas, para que tapar la
-# direccion completa no deje suelto el pedazo del host.
 TAPAR = []
 
-# Topes, para que el informe sea largo pero no infinito.
-ITEMS_POR_RAMO = 60
-DUDOSOS_POR_RAMO = 40
-AVISOS_POR_RAMO = 6
+# Cuanto se permite mirar.  Son topes altos a proposito: esto se corre una
+# vez, a mano, y lo que interesa es que no se escape nada.
+ENLACES_POR_RAMO = 400
+ADENTRO_POR_RAMO = 60          # cuantas paginas internas se abren por ramo
+PAQUETES_POR_RAMO = 12
+AVISOS_POR_RAMO = 8
+ESQUELETOS_POR_RAMO = 4        # cuantos volcados de estructura por ramo
+LARGO_ESQUELETO = 90           # lineas de estructura por pagina
+TOPE_INFORME = 600000          # caracteres; si se pasa, se corta avisando
+
+# Palabras que se tapan en todo el informe.  Empieza VACIA a proposito: aca no
+# va escrito el nombre de la universidad ni el de las plataformas, porque este
+# archivo vive en el repositorio y el repositorio no tiene por que decir donde
+# estudias.  La lista se llena sola con los pedazos de tus propias direcciones.
+PALABRAS_TAPADAS = []
+
+# Pedazos que aparecen en cualquier direccion y no dicen nada de vos.
+PEDAZOS_COMUNES = ("http", "https", "www", "com", "org", "net", "edu", "gov",
+                   "php", "html", "index", "login", "course", "curso", "user",
+                   "file", "download", "view", "page", "site", "web")
+
+
+def tapar_los_pedazos(valor):
+    """Guarda tambien los pedazos sueltos de una direccion o un usuario.
+
+    Sirve para cuando el nombre de la universidad aparece escrito en el texto
+    de la pagina y no como direccion: ahi el reemplazo entero no alcanza.
+    """
+    for pedazo in re.split(r"[^A-Za-z0-9]+", str(valor or "")):
+        chico = pedazo.lower()
+        if (len(chico) >= 3 and chico not in PEDAZOS_COMUNES
+                and not chico.isdigit() and chico not in PALABRAS_TAPADAS):
+            PALABRAS_TAPADAS.append(chico)
+
+
+def cargar_palabras_extra():
+    """Palabras que solo vos sabes y NO pueden vivir en el repositorio.
+
+    Van en mis_datos.txt, en la linea PALABRAS_A_TAPAR, separadas por
+    comas: por ejemplo la sigla de tu universidad, que aparece escrita en
+    los avisos aunque no este en la direccion de la pagina.  Ese archivo
+    no se sube a ningun lado, asi que el nombre nunca queda guardado
+    dentro del proyecto.
+    """
+    for palabra in (os.environ.get("PALABRAS_A_TAPAR") or "").split(","):
+        chico = palabra.strip().lower()
+        if len(chico) >= 2 and chico not in PALABRAS_TAPADAS:
+            PALABRAS_TAPADAS.append(chico)
 
 
 def guardar_secreto(valor, etiqueta):
+    """Anota un dato para taparlo despues en todo el informe."""
     valor = (valor or "").strip()
-    if len(valor) < 4:
-        return
-    TAPAR.append((valor, etiqueta))
-    sin_barra = valor.rstrip("/")
-    TAPAR.append((sin_barra, etiqueta))
-    # el host solo, sin http, por si aparece pelado en algun enlace
-    host = re.sub(r"^https?://", "", sin_barra)
-    if host and host != sin_barra:
-        TAPAR.append((host, etiqueta))
-    TAPAR.sort(key=lambda x: len(x[0]), reverse=True)
+    if len(valor) >= 4:
+        TAPAR.append((valor, etiqueta))
+        # La misma direccion sin el principio: en el HTML muchas veces aparece
+        # pelada y asi no se escapa.
+        pelado = valor.split("://")[-1].rstrip("/")
+        if pelado and pelado != valor:
+            TAPAR.append((pelado, etiqueta))
+        if "." in valor:
+            tapar_los_pedazos(pelado)
+        # Las mas largas primero: si una direccion contiene a la otra, se tapa
+        # la larga y no queda un pedazo suelto a la vista.
+        TAPAR.sort(key=lambda x: len(x[0]), reverse=True)
 
 
 def tapar(texto):
-    """Saca del informe todo lo que te identifica."""
-    t = str(texto or "")
+    """Saca del texto todo lo que pueda identificarte."""
+    t = str(texto)
     for valor, etiqueta in TAPAR:
         if valor:
             t = t.replace(valor, etiqueta)
-    # llaves de sesion que van pegadas a los enlaces
-    t = re.sub(r"(?i)([?&](?:sesskey|logintoken|token|key|auth|jwt)=)[^&\s]+",
-               r"\1OCULTO", t)
-    # cualquier correo que se haya colado en un titulo
+    for palabra in PALABRAS_TAPADAS:
+        t = re.sub(re.escape(palabra), "OCULTO", t, flags=re.I)
+    # Un correo suelto que se haya colado en el HTML.
     t = re.sub(r"[\w.+-]+@[\w.-]+\.\w+", "CORREO_OCULTO", t)
+    # La llave con la que la pagina reconoce tu sesion: no sirve para arreglar
+    # nada y con ella alguien podria hacerse pasar por vos mientras dura.
+    t = re.sub(r"(sesskey[\"']?\s*[:=]\s*[\"']?)[A-Za-z0-9]+", r"\1OCULTO", t)
     return t
 
 
 def escribir(texto=""):
-    linea = tapar(texto)
-    LINEAS.append(linea)
-    try:
-        print(linea)
-    except Exception:
-        # una consola vieja puede no poder mostrar un emoji: el informe sigue
-        print(linea.encode("ascii", "replace").decode("ascii"))
+    LINEAS.append(tapar(texto))
 
 
 def titulo(t):
     escribir("")
-    escribir("=" * 64)
+    escribir("=" * 66)
     escribir(t)
-    escribir("=" * 64)
+    escribir("=" * 66)
+
+
+def subtitulo(t):
+    escribir("")
+    escribir("-" * 60)
+    escribir(t)
+    escribir("-" * 60)
 
 
 def volcar():
-    """Deja el informe en disco.  Se llama pase lo que pase."""
+    texto = "\n".join(LINEAS)
+    if len(texto) > TOPE_INFORME:
+        texto = (texto[:TOPE_INFORME]
+                 + "\n\n[...] el informe se corto aca para que se pueda "
+                   "mandar. Avisame y lo parto en dos.")
+    with open(SALIDA, "w", encoding="utf-8") as f:
+        f.write(texto)
+    return len(texto)
+
+
+def peso(n):
+    if n is None:
+        return "?"
+    if n < 1024:
+        return "%d B" % n
+    if n < 1024 * 1024:
+        return "%.1f kB" % (n / 1024.0)
+    return "%.1f MB" % (n / (1024.0 * 1024))
+
+
+# ------------------------------------------------------------------ mirar
+def bajar(s, url, limite=900000):
+    """Trae una pagina y devuelve todo lo que se sabe de ella."""
+    ficha = {"url": url, "codigo": 0, "tipo": "", "peso": 0, "html": "",
+             "falla": "", "segundos": 0.0, "final": url}
+    t0 = time.time()
     try:
-        with open(SALIDA, "w", encoding="utf-8") as f:
-            f.write("\n".join(LINEAS) + "\n")
-        print("")
-        print("Listo. El informe quedo en %s" % SALIDA)
-        print("Abrilo, mirá que no tenga nada tuyo, y mandámelo.")
+        r = s.get(url, timeout=45, allow_redirects=True)
+        ficha["codigo"] = r.status_code
+        ficha["tipo"] = (r.headers.get("Content-Type") or "").split(";")[0]
+        ficha["final"] = r.url
+        crudo = r.content or b""
+        ficha["peso"] = len(crudo)
+        if "text" in ficha["tipo"] or "html" in ficha["tipo"] or "json" in ficha["tipo"]:
+            ficha["html"] = crudo[:limite].decode("utf-8", "ignore")
+        else:
+            ficha["crudo"] = crudo
     except Exception as e:
-        print("No pude escribir %s (%s)" % (SALIDA, type(e).__name__))
-
-
-def mirar_enlace(s, url, W):
-    """Le pregunta al servidor que hay detras de un enlace, sin bajarlo."""
-    ficha = {"estado": "", "tipo": "", "pegado": "no", "largo": "",
-             "como": "", "veredicto": ""}
-    for metodo in ("head", "get"):
-        try:
-            if metodo == "head":
-                r = s.head(url, timeout=12, allow_redirects=True)
-            else:
-                r = s.get(url, timeout=15, allow_redirects=True, stream=True)
-            ficha["como"] = metodo
-            ficha["estado"] = str(getattr(r, "status_code", ""))
-            ficha["tipo"] = (r.headers.get("Content-Type") or "")[:60]
-            pegado = (r.headers.get("Content-Disposition") or "")
-            ficha["pegado"] = "si" if pegado else "no"
-            ficha["largo"] = r.headers.get("Content-Length") or ""
-            if metodo == "get":
-                try:
-                    r.close()
-                except Exception:
-                    pass
-            if ficha["estado"] and int(ficha["estado"]) < 400:
-                break
-        except Exception as e:
-            ficha["estado"] = "sin respuesta (%s)" % type(e).__name__
-    # El veredicto se saca con la misma regla que usa el bot: si viene pegado
-    # como adjunto, o si el tipo no es una pagina, es un archivo.
-    tipo = ficha["tipo"].lower()
-    if ficha["pegado"] == "si":
-        ficha["veredicto"] = "ARCHIVO"
-    elif tipo and "html" not in tipo and not tipo.startswith("text/"):
-        ficha["veredicto"] = "ARCHIVO"
-    elif tipo:
-        ficha["veredicto"] = "pagina"
-    else:
-        ficha["veredicto"] = "no se pudo saber"
+        ficha["falla"] = type(e).__name__
+    ficha["segundos"] = round(time.time() - t0, 1)
     return ficha
 
 
-def informe_de_ramo(W, CFG, s, base, ficha, etiqueta):
-    """Todo lo que se vio en un ramo, y como lo clasificaria el bot."""
-    g = ficha["g"]
-    items = ficha["items"]
-    escribir("")
-    escribir("-" * 64)
-    escribir("RAMO: %s" % (g.get("nombre") or "sin nombre"))
-    escribir("  plataforma      : %s   id interno: %s" % (etiqueta, g.get("id")))
-    escribir("  demoro          : %.1f segundos" % ficha["seg"])
-    if items is None:
-        escribir("  NO SE PUDO LEER esta pagina (no es lo mismo que estar vacia)")
-        return
-    escribir("  cosas que vio   : %d" % len(items))
+RE_ETIQUETA = re.compile(r"<([a-zA-Z][a-zA-Z0-9]*)")
+RE_CLASE = re.compile(r"class=[\"']([^\"']{1,120})[\"']")
+RE_SCRIPT_SRC = re.compile(r"<script[^>]+src=[\"']([^\"']+)[\"']", re.I)
+RE_ENLACE = re.compile(r"href=[\"']([^\"'#]+)[\"']", re.I)
+RE_FORM = re.compile(r"<form[^>]*action=[\"']([^\"']*)[\"']", re.I)
+# Senales de que el contenido no viene en el HTML sino que lo dibuja el
+# programa del navegador despues.  Si esto aparece, el bot nunca lo va a ver
+# leyendo el HTML y hay que buscar de donde saca los datos.
+SENALES_DE_PROGRAMA = ["application/json", "data-react", "ng-app", "vue",
+                       "jstree", "datatable", "ajax", "fetch(", "XMLHttpRequest",
+                       "webservice", "sesskey", "require([", "M.cfg"]
 
-    bajables, dudosos, paginas = [], [], []
-    for it in items:
-        url, tit = it.get("url") or "", it.get("titulo") or ""
-        if W.es_bajable(url, tit):
-            bajables.append(it)
-        elif any(p in url.lower() for p in W.PISTAS_DE_ACTIVIDAD):
-            dudosos.append(it)
+
+def inventario(html):
+    """Que hay adentro de esta pagina, contado."""
+    etiquetas = collections.Counter(e.lower() for e in RE_ETIQUETA.findall(html))
+    clases = collections.Counter()
+    for c in RE_CLASE.findall(html):
+        for una in c.split():
+            clases[una[:40]] += 1
+    scripts = RE_SCRIPT_SRC.findall(html)
+    formularios = RE_FORM.findall(html)
+    senales = [p for p in SENALES_DE_PROGRAMA if p.lower() in html.lower()]
+    return etiquetas, clases, scripts, formularios, senales
+
+
+def esqueleto(html, tope=LARGO_ESQUELETO):
+    """La estructura de la pagina sin los textos: para ver donde estaria el
+    material si estuviera."""
+    limpio = re.sub(r"<script.*?</script>", "<script/>", html,
+                    flags=re.S | re.I)
+    limpio = re.sub(r"<style.*?</style>", "<style/>", limpio,
+                    flags=re.S | re.I)
+    filas, hondo = [], 0
+    for trozo in re.findall(r"<[^>]{1,200}>|[^<]{1,120}", limpio):
+        trozo = trozo.strip()
+        if not trozo:
+            continue
+        if trozo.startswith("</"):
+            hondo = max(0, hondo - 1)
+            continue
+        if trozo.startswith("<"):
+            nombre = RE_ETIQUETA.findall(trozo)
+            nombre = nombre[0].lower() if nombre else "?"
+            clase = RE_CLASE.findall(trozo)
+            enlace = RE_ENLACE.findall(trozo)
+            fila = "%s<%s%s%s>" % (
+                " " * min(hondo, 12), nombre,
+                (" ." + clase[0][:45]) if clase else "",
+                (" -> " + enlace[0][:70]) if enlace else "")
+            filas.append(fila)
+            if not trozo.endswith("/>") and nombre not in (
+                    "br", "img", "input", "meta", "link", "hr"):
+                hondo += 1
         else:
-            paginas.append(it)
-    escribir("  se pueden bajar : %d" % len(bajables))
-    escribir("  en duda         : %d  (a estos les pregunto al servidor)"
-             % len(dudosos))
-    escribir("  paginas sueltas : %d" % len(paginas))
-    avisos_del_ramo = g.get("avisos") or []
-    escribir("  avisos del profe: %d" % len(avisos_del_ramo))
-
-    if bajables:
-        escribir("")
-        escribir("  --- lo que YA reconoce como archivo")
-        for it in bajables[:ITEMS_POR_RAMO]:
-            escribir("    * %s" % (it.get("titulo") or "")[:90])
-            escribir("      %s" % it.get("url"))
-        if len(bajables) > ITEMS_POR_RAMO:
-            escribir("    ... y %d mas" % (len(bajables) - ITEMS_POR_RAMO))
-
-    if dudosos:
-        escribir("")
-        escribir("  --- enlaces en duda, con lo que contesto el servidor")
-        ganados = 0
-        for it in dudosos[:DUDOSOS_POR_RAMO]:
-            d = mirar_enlace(s, it.get("url") or "", W)
-            if d["veredicto"] == "ARCHIVO":
-                ganados += 1
-            escribir("    * %s" % (it.get("titulo") or "")[:90])
-            escribir("      %s" % it.get("url"))
-            escribir("      respuesta %s por %s | tipo: %s | pegado: %s | "
-                     "peso: %s -> %s"
-                     % (d["estado"] or "?", d["como"] or "?",
-                        d["tipo"] or "(no dijo)", d["pegado"],
-                        d["largo"] or "(no dijo)", d["veredicto"]))
-        if len(dudosos) > DUDOSOS_POR_RAMO:
-            escribir("    ... y %d mas sin preguntar"
-                     % (len(dudosos) - DUDOSOS_POR_RAMO))
-        escribir("    resultado: %d de %d enlaces en duda eran archivos de verdad"
-                 % (ganados, min(len(dudosos), DUDOSOS_POR_RAMO)))
-
-    if paginas:
-        escribir("")
-        escribir("  --- paginas que no parecen material (por si alguna deberia)")
-        for it in paginas[:12]:
-            escribir("    * %s | %s" % ((it.get("titulo") or "")[:60],
-                                        it.get("url")))
-        if len(paginas) > 12:
-            escribir("    ... y %d mas" % (len(paginas) - 12))
-
-    if avisos_del_ramo:
-        escribir("")
-        escribir("  --- avisos escritos que leyo")
-        for a in avisos_del_ramo[:AVISOS_POR_RAMO]:
-            escribir("    * %s%s" % ((a.get("titulo") or "")[:80],
-                                     "  [urgente]" if a.get("urgente")
-                                     else ("  [importante]" if a.get("importante")
-                                           else "")))
-        if len(avisos_del_ramo) > AVISOS_POR_RAMO:
-            escribir("    ... y %d mas" % (len(avisos_del_ramo) - AVISOS_POR_RAMO))
+            if len(trozo) > 2:
+                filas.append("%s%s" % (" " * min(hondo, 12), trozo[:90]))
+        if len(filas) >= tope:
+            filas.append("   [...] (sigue)")
+            break
+    return filas
 
 
-def main():
-    secretos.cargar(silencioso=True)
-
-    import fuentes as CFG
-    import watcher as W
-
-    titulo("SONDA DEL VIGILANTE")
+def mirar_paquete(ficha):
+    """Si esto que bajamos es un paquete de la plataforma, decir que trae."""
+    crudo = ficha.get("crudo") or b""
+    if not crudo or crudo[:2] != b"PK":
+        return None
     try:
-        import version as VER
-        escribir("version del bot : v%s" % VER.VERSION)
+        z = zipfile.ZipFile(io.BytesIO(crudo))
+        return [(i.filename, i.file_size) for i in z.infolist()][:60]
+    except Exception as e:
+        return [("no se pudo abrir: " + type(e).__name__, 0)]
+
+
+# --------------------------------------------------------------- un ramo
+def informe_de_ramo(W, CFG, s, base, ficha_ramo, etiqueta):
+    nombre = ficha_ramo.get("nombre", "?")
+    raiz = ficha_ramo.get("url", "")
+    subtitulo("RAMO: %s" % nombre)
+    escribir("portada    : %s" % raiz.replace(base, etiqueta))
+
+    portada = bajar(s, raiz)
+    escribir("respuesta  : %s | %s | %s | %ss"
+             % (portada["codigo"], portada["tipo"] or "?",
+                peso(portada["peso"]), portada["segundos"]))
+    if portada["falla"]:
+        escribir("no se pudo abrir la portada: %s" % portada["falla"])
+        return
+    html = portada["html"]
+    etiquetas, clases, scripts, formularios, senales = inventario(html)
+    escribir("etiquetas  : %s" % ", ".join(
+        "%s=%d" % (k, v) for k, v in etiquetas.most_common(12)))
+    escribir("clases     : %s" % ", ".join(
+        "%s=%d" % (k, v) for k, v in clases.most_common(14)))
+    escribir("programas  : %d externos%s"
+             % (len(scripts),
+                (" | " + ", ".join(x.split("/")[-1][:40] for x in scripts[:8]))
+                if scripts else ""))
+    escribir("formularios: %d %s" % (len(formularios),
+                                     ", ".join(formularios[:4])))
+    escribir("senales de contenido dibujado por programa: %s"
+             % (", ".join(senales) if senales else "ninguna"))
+
+    # ---- todos los enlaces, sin filtrar
+    try:
+        items = W.cosas_de_la_pagina(html, base, propia=raiz)
+    except Exception as e:
+        items = []
+        escribir("[!] no pude leer los enlaces de la portada: %s" % type(e).__name__)
+    crudos = []
+    vistos = set()
+    for u in RE_ENLACE.findall(html):
+        if u.startswith("javascript") or u.startswith("mailto"):
+            continue
+        entero = u if u.startswith("http") else (base + u if u.startswith("/")
+                                                 else raiz.rstrip("/") + "/" + u)
+        if entero not in vistos:
+            vistos.add(entero)
+            crudos.append(entero)
+    escribir("")
+    escribir("enlaces en la portada: %d en total, %d los entendio el bot"
+             % (len(crudos), len(items)))
+
+    bajables, internos, paquetes, otros = [], [], [], []
+    for u in crudos[:ENLACES_POR_RAMO]:
+        bajo = u.lower()
+        if "download_zip" in bajo or "/zip" in bajo:
+            paquetes.append(u)
+        elif W.es_bajable(u, ""):
+            bajables.append(u)
+        elif any(p in bajo for p in W.PISTAS_DE_ACTIVIDAD) and base in u:
+            internos.append(u)
+        else:
+            otros.append(u)
+    escribir("  bajables directos : %d" % len(bajables))
+    escribir("  secciones adentro : %d" % len(internos))
+    escribir("  paquetes armados  : %d" % len(paquetes))
+    escribir("  el resto          : %d" % len(otros))
+    escribir("")
+    escribir("LISTA COMPLETA DE ENLACES DE LA PORTADA")
+    for u in crudos[:ENLACES_POR_RAMO]:
+        marca = ("PAQUETE" if u in paquetes else
+                 "BAJABLE" if u in bajables else
+                 "ADENTRO" if u in internos else "otro   ")
+        escribir("  [%s] %s" % (marca, u.replace(base, etiqueta)))
+
+    # ---- entrar a cada seccion y mirar que hay de verdad
+    escribir("")
+    escribir("ADENTRO DE CADA SECCION")
+    esqueletos = 0
+    encontrados_adentro = 0
+    for u in internos[:ADENTRO_POR_RAMO]:
+        dentro = bajar(s, u)
+        escribir("")
+        escribir("  > %s" % u.replace(base, etiqueta))
+        escribir("    respuesta: %s | %s | %s | %ss"
+                 % (dentro["codigo"], dentro["tipo"] or "?",
+                    peso(dentro["peso"]), dentro["segundos"]))
+        if dentro["falla"]:
+            escribir("    no se pudo abrir: %s" % dentro["falla"])
+            continue
+        if dentro["final"] != u:
+            escribir("    me mando a: %s" % dentro["final"].replace(base, etiqueta))
+        hd = dentro["html"]
+        if not hd:
+            escribir("    esto no es una pagina: es un archivo")
+            continue
+        et, cl, sc, fo, se = inventario(hd)
+        nuevos = []
+        for x in RE_ENLACE.findall(hd):
+            entero = x if x.startswith("http") else (
+                base + x if x.startswith("/") else "")
+            if entero and entero not in vistos:
+                nuevos.append(entero)
+        bajables_dentro = [x for x in nuevos if W.es_bajable(x, "")]
+        paquetes_dentro = [x for x in nuevos if "download_zip" in x.lower()]
+        encontrados_adentro += len(bajables_dentro)
+        escribir("    enlaces nuevos: %d | bajables: %d | paquetes: %d"
+                 % (len(nuevos), len(bajables_dentro), len(paquetes_dentro)))
+        escribir("    clases: %s" % ", ".join(
+            "%s=%d" % (k, v) for k, v in cl.most_common(8)))
+        if se:
+            escribir("    dibujado por programa: %s" % ", ".join(se))
+        for x in (bajables_dentro + paquetes_dentro)[:20]:
+            escribir("      * %s" % x.replace(base, etiqueta))
+        for x in nuevos[:25]:
+            if x not in bajables_dentro and x not in paquetes_dentro:
+                escribir("      . %s" % x.replace(base, etiqueta))
+        for x in nuevos:
+            if "download_zip" in x.lower() and x not in paquetes:
+                paquetes.append(x)
+        # Si la seccion parece vacia, se vuelca su estructura: ahi se ve si el
+        # material esta escondido detras de un programa del navegador.
+        if not bajables_dentro and esqueletos < ESQUELETOS_POR_RAMO:
+            esqueletos += 1
+            escribir("    --- como esta armada esta pagina ---")
+            for fila in esqueleto(hd):
+                escribir("    | " + fila)
+
+    # ---- los paquetes que arma la propia plataforma
+    escribir("")
+    escribir("PAQUETES QUE ARMA LA PLATAFORMA")
+    if not paquetes:
+        escribir("  no encontre ninguno en este ramo")
+    for u in paquetes[:PAQUETES_POR_RAMO]:
+        p = bajar(s, u)
+        escribir("  > %s" % u.replace(base, etiqueta))
+        escribir("    respuesta: %s | %s | %s"
+                 % (p["codigo"], p["tipo"] or "?", peso(p["peso"])))
+        adentro = mirar_paquete(p)
+        if adentro is None:
+            escribir("    no vino como paquete")
+            continue
+        escribir("    trae %d archivo(s):" % len(adentro))
+        for nombre_a, tam in adentro:
+            escribir("      - %s (%s)" % (nombre_a, peso(tam)))
+
+    escribir("")
+    escribir("RESUMEN DEL RAMO: %d bajables en la portada, %d adentro de las "
+             "secciones, %d paquetes"
+             % (len(bajables), encontrados_adentro, len(paquetes)))
+
+
+# ------------------------------------------------- la plataforma tipo aula
+CAMINOS_DE_AULA = [
+    "/my/",
+    "/my/courses.php",
+    "/course/index.php",
+    "/course/",
+    "/user/profile.php",
+    "/calendar/view.php?view=month",
+    "/message/index.php",
+    "/grade/report/overview/index.php",
+]
+
+
+def probar_aula(W, s, base, etiqueta):
+    """La segunda plataforma dice que entro bien pero no encuentra ni un ramo.
+    Aca se prueba camino por camino para ver donde estan escondidos."""
+    subtitulo("BUSQUEDA DE RAMOS EN LA SEGUNDA PLATAFORMA")
+    llave = ""
+    for camino in CAMINOS_DE_AULA:
+        f = bajar(s, base + camino)
+        escribir("")
+        escribir("> %s%s" % (etiqueta, camino))
+        escribir("  respuesta: %s | %s | %s | %ss"
+                 % (f["codigo"], f["tipo"] or "?", peso(f["peso"]), f["segundos"]))
+        if f["falla"]:
+            escribir("  no se pudo abrir: %s" % f["falla"])
+            continue
+        if f["final"] != base + camino:
+            escribir("  me mando a: %s" % f["final"].replace(base, etiqueta))
+        html = f["html"] or ""
+        if "login" in f["final"]:
+            escribir("  ojo: me devolvio a la pantalla de entrar")
+        cursos = sorted(set(re.findall(r"course/view\.php\?id=(\d+)", html)))
+        escribir("  ramos que se ven aca: %d %s"
+                 % (len(cursos), ", ".join(cursos[:20])))
+        nombres = re.findall(r"coursename[^>]*>([^<]{3,80})<", html)
+        if nombres:
+            escribir("  nombres sueltos: %s" % " | ".join(n.strip() for n in nombres[:8]))
+        if not llave:
+            m = re.search(r"sesskey[\"']?\s*[:=]\s*[\"']([A-Za-z0-9]+)", html)
+            if m:
+                llave = m.group(1)
+        et, cl, sc, fo, se = inventario(html)
+        escribir("  clases: %s" % ", ".join(
+            "%s=%d" % (k, v) for k, v in cl.most_common(10)))
+        if se:
+            escribir("  dibujado por programa: %s" % ", ".join(se))
+        if not cursos and camino in ("/my/", "/my/courses.php"):
+            escribir("  --- como esta armada esta pagina ---")
+            for fila in esqueleto(html, 70):
+                escribir("  | " + fila)
+
+    # El camino que usa la propia pagina para pedir la lista de ramos.
+    if llave:
+        escribir("")
+        escribir("La pagina pide sus ramos por un camino interno. Lo pruebo.")
+        cuerpo = [{"index": 0, "methodname":
+                   "core_course_get_enrolled_courses_by_timeline_classification",
+                   "args": {"offset": 0, "limit": 50, "classification": "all",
+                            "sort": "fullname"}}]
+        try:
+            r = s.post(base + "/lib/ajax/service.php?sesskey=" + llave,
+                       json=cuerpo, timeout=45)
+            texto = (r.text or "")[:4000]
+            escribir("  respuesta: %s | %s" % (r.status_code, peso(len(r.content or b""))))
+            cuantos = len(re.findall(r'"fullname"', texto))
+            escribir("  ramos que contesto: %d" % cuantos)
+            escribir("  primeros datos: %s" % texto[:700])
+        except Exception as e:
+            escribir("  no pude preguntar: %s" % type(e).__name__)
+    else:
+        escribir("")
+        escribir("No encontre la llave interna de la pagina, asi que no puedo "
+                 "probar el camino que usa ella misma para pedir los ramos.")
+
+
+# ------------------------------------------------------------------ main
+def main():
+    import secretos as SEC
+    try:
+        SEC.cargar(silencioso=True)
     except Exception:
         pass
+    import watcher as W
+    import fuentes as CFG
+    import version as VER
+
+    cargar_palabras_extra()
+
+    for nombre_env, etiqueta in (("SITE_A_USER", "USUARIO_OCULTO"),
+                                 ("SITE_A_PASS", "CLAVE_OCULTA"),
+                                 ("SITE_B_USER", "USUARIO_OCULTO"),
+                                 ("SITE_B_PASS", "CLAVE_OCULTA"),
+                                 ("CAL_URL", "CALENDARIO_OCULTO"),
+                                 ("CAL_URL_B", "CALENDARIO_OCULTO"),
+                                 ("TG_TOKEN", "OCULTO"), ("TG_CHAT", "OCULTO"),
+                                 ("GH_TOKEN", "OCULTO"), ("GIST_ID", "OCULTO"),
+                                 ("GH_REPO", "OCULTO")):
+        guardar_secreto(os.environ.get(nombre_env, ""), etiqueta)
+
+    titulo("SONDA v2 - mapa completo de las plataformas")
+    escribir("version del bot : %s" % VER.VERSION)
     escribir("fecha de la sonda: %s" % W.ahora().strftime("%d-%m-%Y %H:%M"))
     escribir("zona horaria     : %s" % getattr(CFG, "ZONA_HORARIA", "?"))
     escribir("")
-    escribir("La sonda mira MAS que el bot en su vuelta normal: entra a todas")
-    escribir("las actividades, sin esperar ni saltarse nada.")
+    escribir("Esto NO toca la memoria del bot ni manda mensajes: solo mira.")
 
-    # Para la sonda no hay atajos: sin cache de exploracion, un nivel mas
-    # adentro y mas paginas por ramo.  Esto NO cambia como corre el bot.
+    # La sonda mira hondo aunque el bot ande liviano.
     CFG.MINUTOS_EXPLORACION_PROFUNDA = 0
-    CFG.PROFUNDIDAD = max(2, getattr(CFG, "PROFUNDIDAD", 1))
-    CFG.PAGINAS_POR_RAMO = max(30, getattr(CFG, "PAGINAS_POR_RAMO", 14))
-    W._ULTIMO_PROFUNDO.clear()
+    CFG.PROFUNDIDAD = max(3, getattr(CFG, "PROFUNDIDAD", 1))
+    CFG.PAGINAS_POR_RAMO = max(60, getattr(CFG, "PAGINAS_POR_RAMO", 14))
+    try:
+        W._ULTIMO_PROFUNDO.clear()
+    except Exception:
+        pass
 
-    hubo = False
-    for f in CFG.FUENTES:
-        etiqueta = "PLATAFORMA_" + str(f.get("clave"))
-        titulo(etiqueta + "   (modo de entrada: %s)" % f.get("modo"))
+    letras = "AB"
+    for i, f in enumerate(CFG.FUENTES):
+        etiqueta = "PLATAFORMA_%s" % (letras[i] if i < len(letras) else i)
+        titulo("%s (modo %s)" % (etiqueta, f.get("modo")))
         if not f.get("activo"):
-            escribir("esta apagada en la configuracion, la salteo")
+            escribir("esta plataforma esta apagada en la configuracion")
             continue
         base = os.environ.get(f["env_url"], "").strip().rstrip("/")
         usuario = os.environ.get(f["env_user"], "").strip()
         clave = os.environ.get(f["env_pass"], "")
-        guardar_secreto(base, etiqueta)
-        guardar_secreto(usuario, "USUARIO_OCULTO")
-        guardar_secreto(clave, "CLAVE_OCULTA")
         if not (base and usuario and clave):
-            escribir("faltan datos de esta plataforma en mis_datos.txt, la salteo")
+            escribir("faltan los datos de entrada de esta plataforma")
             continue
+        guardar_secreto(base, etiqueta)
+        guardar_secreto(base.replace("https://", "").replace("http://", ""),
+                        etiqueta)
 
         s = W.sesion()
         entrar, leer = W.ADAPTADORES[f["modo"]]
@@ -265,86 +543,37 @@ def main():
         try:
             entro = entrar(s, base, usuario, clave)
         except Exception as e:
-            escribir("no pude entrar: %s" % type(e).__name__)
-            continue
-        escribir("entrada          : %s  (%.1f s)"
-                 % ("ok" if entro else "NO PUDE ENTRAR", time.time() - t0))
+            entro = False
+            escribir("reviento al entrar: %s" % type(e).__name__)
+        escribir("entrada : %s (%.1f s)" % ("ok" if entro else "NO PUDE",
+                                            time.time() - t0))
         if not entro:
-            escribir("Si el usuario y la clave estan bien, puede que la")
-            escribir("plataforma haya cambiado la pagina de entrada.")
             continue
-        hubo = True
 
-        # Se espia explorar_ramo para medir cada ramo por separado, pero lo que
-        # corre adentro es EL MISMO codigo del bot, no una copia.
-        registro = []
-        original = W.explorar_ramo
+        if f.get("modo") == "aula":
+            probar_aula(W, s, base, etiqueta)
 
-        def espia(s2, base2, g2, _o=original, _r=registro):
-            t = time.time()
-            items, firma = _o(s2, base2, g2)
-            _r.append({"g": dict(g2), "items": items, "firma": firma,
-                       "seg": time.time() - t})
-            return items, firma
-
-        W.explorar_ramo = espia
         t0 = time.time()
+        grupos, viejos = {}, {}
         try:
             grupos, viejos = leer(s, base)
         except Exception as e:
-            escribir("se cayo leyendo la plataforma: %s" % type(e).__name__)
-            grupos, viejos = None, []
-        finally:
-            W.explorar_ramo = original
+            escribir("reviento leyendo los ramos: %s" % type(e).__name__)
+        escribir("ramos activos : %d | ramos viejos : %d | tardo %.1f s"
+                 % (len(grupos or {}), len(viejos or {}), time.time() - t0))
 
-        if grupos is None:
-            escribir("no pude leer la lista de ramos")
-            continue
-        escribir("ramos activos    : %d" % len(grupos))
-        escribir("ramos viejos     : %d (esos se ignoran a proposito)"
-                 % len(viejos or []))
-        escribir("recorrido entero : %.1f segundos" % (time.time() - t0))
-
-        for ficha in registro:
-            informe_de_ramo(W, CFG, s, base, ficha, etiqueta)
-
-    titulo("AGENDA DE PLAZOS")
-    try:
-        import watcher as W2
-        enlaces = W2.enlaces_de_agenda()
-        escribir("calendarios configurados: %d" % len(enlaces))
-        for nombre, url in enlaces:
-            guardar_secreto(url, "CALENDARIO_OCULTO")
-        eventos = W2.leer_agenda() if enlaces else []
-        escribir("eventos leidos          : %d" % len(eventos))
-        for e in eventos[:10]:
-            escribir("  * %s | vence %s" % ((e.get("titulo") or "")[:70],
-                                            e.get("vence")))
-        if len(eventos) > 10:
-            escribir("  ... y %d mas" % (len(eventos) - 10))
-    except Exception as e:
-        escribir("no pude revisar la agenda: %s" % type(e).__name__)
+        for clave_g, ficha in list((grupos or {}).items()):
+            try:
+                informe_de_ramo(W, CFG, s, base, ficha, etiqueta)
+            except Exception as e:
+                escribir("[!] este ramo reviento: %s" % type(e).__name__)
 
     titulo("FIN")
-    if not hubo:
-        escribir("No entre a ninguna plataforma, asi que este informe no dice")
-        escribir("mucho. Revisa mis_datos.txt y volve a correrlo.")
-    else:
-        escribir("Mandame este archivo completo. Con esto se puede ver, ramo por")
-        escribir("ramo, que material existe y que estaba quedando afuera.")
-    return 0
+    escribir("Si el informe quedo corto, avisame: se puede mirar mas hondo.")
+    largo = volcar()
+    print("listo: %s (%d caracteres)" % (SALIDA, largo))
+    print("revisalo antes de mandarmelo, no deberia tener ningun dato tuyo.")
 
 
 if __name__ == "__main__":
-    try:
-        codigo = main()
-    except KeyboardInterrupt:
-        escribir("")
-        escribir("Lo cortaste a mano. Guardo lo que alcance a mirar.")
-        codigo = 1
-    except Exception as e:
-        escribir("")
-        escribir("La sonda se cayo: %s" % type(e).__name__)
-        codigo = 1
-    volcar()
-    sys.exit(codigo)
+    main()
