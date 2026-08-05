@@ -525,6 +525,50 @@ def _boton_de_tarjeta(estado, dato, acc, ahora):
 
 
 # ---------------------------------------------------------------- puerta
+def anotar_desconocido(estado, quien, nombre="", cuando=None):
+    """Alguien que no sos vos le escribio al bot.
+
+    A esa persona NO se le contesta nunca, ni siquiera un "no tenes permiso":
+    esa respuesta ya le confirmaria que el bot existe y que es tuyo.  Pero vos
+    te enteras, una sola vez por persona, con un boton para no volver a saber
+    de ella.  Asi nadie te puede llenar el chat escribiendole al bot.
+    """
+    if not quien:
+        return
+    try:
+        tope = int(getattr(CFG, "AVISOS_POR_DESCONOCIDO", 1))
+    except Exception:
+        tope = 1
+    gente = estado.setdefault("desconocidos", {})
+    ficha = gente.setdefault(str(quien), {"veces": 0, "avisos": 0,
+                                          "nombre": "", "bloqueado": False})
+    ficha["veces"] = ficha.get("veces", 0) + 1
+    if nombre and not ficha.get("nombre"):
+        ficha["nombre"] = str(nombre)[:30]
+    if cuando is not None:
+        try:
+            ficha["ultima"] = cuando.strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            pass
+    # Que la lista no crezca para siempre si alguien insiste con cuentas nuevas.
+    if len(gente) > 40:
+        for viejo in list(gente)[:-40]:
+            gente.pop(viejo, None)
+    if ficha.get("bloqueado") or ficha.get("avisos", 0) >= max(0, tope):
+        return
+    ficha["avisos"] = ficha.get("avisos", 0) + 1
+    como = ("<b>%s</b>" % N.escapar(ficha["nombre"])) if ficha.get("nombre") \
+        else "Alguien"
+    N.enviar("\U0001F6A6 %s que no sos vos le escribi\u00f3 al bot.\n"
+             "No le contest\u00e9 nada y no puede ver nada tuyo: el bot le hace "
+             "caso a un solo tel\u00e9fono, el tuyo.\n\n"
+             "<i>Si no sab\u00e9s qui\u00e9n es, no ten\u00e9s que hacer nada.</i>" % como,
+             botones=N.teclado([
+                 [("\U0001F6AB No avisarme m\u00e1s de esta persona",
+                   "g:no:" + str(quien))],
+                 [("\U0001F465 Qui\u00e9n puede usar el bot", "p:gente")]]))
+
+
 def atender(estado, acc, ahora, espera=0):
     """Lee lo que llego del chat y contesta. Devuelve cuantas cosas atendio."""
     mio = str(estado.get("_chat") or "")
@@ -537,10 +581,14 @@ def atender(estado, acc, ahora, espera=0):
         # ------------------------------------------------ botones
         cb = u.get("callback_query")
         if cb:
-            if mio and str((cb.get("from") or {}).get("id")) != mio:
+            dato = cb.get("data", "")
+            de_quien = str((cb.get("from") or {}).get("id") or "")
+            if mio and de_quien != mio:
+                anotar_desconocido(estado, de_quien,
+                                   (cb.get("from") or {}).get("first_name", ""),
+                                   ahora)
                 continue
             atendidas += 1
-            dato = cb.get("data", "")
             mensaje_id = (cb.get("message") or {}).get("message_id")
 
             # "dormir1" faltaba en esta lista: el boton de posponer una hora
@@ -590,7 +638,11 @@ def atender(estado, acc, ahora, espera=0):
         m = u.get("message") or {}
         texto = (m.get("text") or "").strip()
         quien = str((m.get("chat") or {}).get("id") or "")
-        if not texto or (mio and quien != mio):
+        if not texto:
+            continue
+        if mio and quien != mio:
+            anotar_desconocido(estado, quien,
+                               (m.get("from") or {}).get("first_name", ""), ahora)
             continue
         atendidas += 1
 
