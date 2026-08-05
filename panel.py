@@ -23,6 +23,20 @@ def _si_no(v):
     return "s\u00ed" if v else "no"
 
 
+def _como_llega(estado):
+    """Como llegan los archivos cuando pedis material: eso lo elige el dueno,
+    porque cuatro PDF sueltos se abren de una y veinte tapan el chat."""
+    modo = _cfg(estado).get("material") or getattr(
+        CFG, "MODO_ENVIO_MATERIAL", "auto")
+    return {"suelto": "de a uno", "paquete": "en paquete"}.get(
+        modo, "autom\u00e1tico")
+
+
+def _suenan_importantes(estado):
+    return _cfg(estado).get(
+        "noche_importantes", getattr(CFG, "IMPORTANTES_SUENAN_DE_NOCHE", False))
+
+
 def _resumen_cfg(estado):
     return _cfg(estado).setdefault("resumen", dict(CFG.RESUMEN))
 
@@ -297,6 +311,8 @@ def _avisos(estado, acc):
                                         else "suena"), "t:noche"),
          ("\U0001F514 %s" % _cfg(estado).get("perfil", CFG.PERFIL_POR_DEFECTO),
           "t:perfilg")],
+        [("\U0001F4E3 Prueba o entrega de noche: %s"
+          % _si_no(_suenan_importantes(estado)), "t:nocheimp")],
         [("\u2B05\uFE0F Volver", "p:raiz")],
     ])
     return texto, botones
@@ -366,6 +382,7 @@ def _mas(estado, acc):
          ("\U0001F91D Compartir", "p:comp")],
         [("\U0001F4E8 Otras secciones", "p:afuera"),
          ("\u23F3 Reloj de GitHub", "a:reloj")],
+        [("\U0001F4C4 Material: %s" % _como_llega(estado), "t:material")],
         [("\u2B05\uFE0F Volver", "p:ajustes")],
     ])
 
@@ -724,6 +741,25 @@ def toque(estado, dato, acc, ahora):
     if dato == "t:noche":
         cfg["noche"] = not cfg.get("noche", True)
         return ("De madrugada sin sonido" if cfg["noche"] else "Suena a cualquier hora"), None
+
+    if dato == "t:nocheimp":
+        cfg["noche_importantes"] = not _suenan_importantes(estado)
+        return (("Un aviso de prueba, entrega o asistencia tambi\u00e9n va a sonar "
+                 "de madrugada") if cfg["noche_importantes"] else
+                "De madrugada esos avisos llegan, pero sin sonido"), None
+
+    if dato == "t:material":
+        # Da la vuelta entre las tres formas, asi con un solo boton se prueban
+        # todas y no hace falta una pantalla nueva.
+        vuelta = {"auto": "suelto", "suelto": "paquete", "paquete": "auto"}
+        modo = cfg.get("material") or getattr(CFG, "MODO_ENVIO_MATERIAL", "auto")
+        cfg["material"] = vuelta.get(modo, "suelto")
+        if cfg["material"] == "auto":
+            return ("Pocos archivos te llegan de a uno y muchos en un paquete",
+                    None)
+        if cfg["material"] == "suelto":
+            return "Los archivos te van a llegar siempre de a uno", None
+        return "Los archivos te van a llegar siempre en un paquete", None
 
     if dato == "t:ia":
         cfg["ia"] = not cfg.get("ia", True)
