@@ -209,6 +209,11 @@ def quitar_teclado():
 
 
 # ------------------------------------------------------------- mandar
+# Id de lo ultimo que mandamos al chat.  Con esto el panel se da cuenta de
+# si quedo tapado por mensajes posteriores.
+ULTIMO_MANDADO = 0
+
+
 def enviar(texto, silencioso=False, botones=None, teclado_fijo=False):
     """Manda un mensaje. Devuelve el id del mensaje, o None."""
     if not listo() or not texto:
@@ -232,7 +237,11 @@ def enviar(texto, silencioso=False, botones=None, teclado_fijo=False):
         datos.pop("parse_mode", None)
         datos["text"] = cortar_avisando(sin_etiquetas(texto))
         r = _api("sendMessage", datos)
-    return (r or {}).get("message_id")
+    mid = (r or {}).get("message_id")
+    if mid:
+        global ULTIMO_MANDADO
+        ULTIMO_MANDADO = mid
+    return mid
 
 
 def editar(mensaje_id, texto, botones=None, limpiar_botones=True):
