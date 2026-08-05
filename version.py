@@ -7,11 +7,36 @@ mensaje NO se borra.  Ademas lo podes ver cuando quieras en
 Ajustes -> Version y novedades, o escribiendo /version.
 """
 
-VERSION = "5.9"
-FECHA = "05-08-2026 00:20"
-TITULO = "tercera revision: el material que estaba ahi y el bot no veia"
+VERSION = "6.0"
+FECHA = "05-08-2026 09:40"
+TITULO = "cuarta revision: quien entra al bot, la IA que por fin contesta y el material como vos lo pediste"
 
 CAMBIOS = [
+    "LO MAS IMPORTANTE: le dabas a 'descargar todo' en un ramo con dos "
+    "archivos y te llegaba una sola cosa comprimida, que en el telefono no "
+    "se abre. No era el bot juntandolos: era la plataforma, que entrega su "
+    "propio paquete ya armado y el bot te lo pasaba tal cual. Ahora lo abre "
+    "el, te manda los archivos de a uno con su nombre y su formato, y te "
+    "explica por que los ves separados.",
+    "Cuando son varios archivos, antes de mandarlos te pregunta cómo los "
+    "queres: de a uno o todo junto en un solo envio. Eso vale para ese "
+    "pedido nomas, no te queda pegado para siempre.",
+    "Boton nuevo para probar la ayuda de IA, en Mas. Le hace una pregunta de "
+    "verdad y te cuenta en castellano que paso: cuantas claves le llegaron, "
+    "si se acabo el cupo del dia o si el servicio no contesta. Nunca muestra "
+    "tus claves, y te recuerda que los avisos y el material no dependen de "
+    "la IA.",
+    "Ya le podes pedir archivos escribiendo, no solo con botones: 'mandame "
+    "el ultimo archivo de calculo', 'lo del ultimo dia de calculo' o 'busca "
+    "los archivos que digan certamen'. Siempre te muestra que encontro y "
+    "espera que confirmes antes de mandarte nada.",
+    "Pantalla nueva 'Quien puede usar el bot', en Mas: de un vistazo ves a "
+    "quien le hace caso, quien recibe material tuyo y quien intento "
+    "escribirle sin permiso. Desde ahi cortas todo lo compartido de una, "
+    "aunque parezca que no hay nadie.",
+    "Si un desconocido le escribe al bot, el bot no le contesta nada y te "
+    "avisa a vos una sola vez, con un boton para no volver a saber de esa "
+    "persona. Antes no te enterabas.",
     "LO MAS IMPORTANTE: un ramo podia tener material subido hace DIAS y el "
     "bot te decia que no habia ni un archivo. Pasaban dos cosas: muchos "
     "enlaces de material no terminan en .pdf y el bot los descartaba por el "
