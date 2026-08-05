@@ -3,6 +3,7 @@
  "archivados": {},
  "arrancado": true,
  "ausentes": {},
+ "aviso_memoria": 1785877172.22703,
  "avisos": {
   "mio_1785759296": [
    "72",
@@ -45,26 +46,27 @@
  "deshacer": {
   "antes": {
    "clave": "",
+   "es_tarea": false,
    "grupo": "",
    "hecho": false,
    "mio": true,
    "nota": "",
-   "titulo": "osi",
+   "titulo": "Prueba",
    "url": "",
-   "vence": "2026-08-10 18:45"
+   "vence": "2026-08-04 18:17"
   },
-  "aviso": "marqué osi",
-  "cuando": 1785871576.7960837,
-  "id": "mio_1786401900",
+  "aviso": "marqué Prueba",
+  "cuando": 1785880972.387898,
+  "id": "mio_1785867420",
   "nuevo_id": "",
   "que": "listo",
   "usado": false,
-  "volver": "p:pen"
+  "volver": "p:rec"
  },
- "esperando_clave": null,
+ "esperando_busqueda": "45def8adfd92342e",
  "esperando_nota": null,
  "fallas": {},
- "fallas_ia": 1,
+ "fallas_ia": 2,
  "grupos": {
   "37c92d6cdfb91534": {
    "avisos_leidos": true,
@@ -76,7 +78,7 @@
    "id": "98383",
    "nombre": "ACTIVIDAD DE TITULACIÓN II",
    "url": "https://adecca.ubiobio.cl/curso/98383",
-   "visto": "2026-08-04 16:00"
+   "visto": "2026-08-04 21:51"
   },
   "45def8adfd92342e": {
    "aviso_ciego": "2026-08-04 14:26",
@@ -87,7 +89,8 @@
    "firma": "6f6656327dac9d44",
    "firmas_vistas": [
     "85edbe7309188aa8",
-    "6f6656327dac9d44"
+    "6f6656327dac9d44",
+    "3cf49c237da69916"
    ],
    "fuente": "A",
    "honda": true,
@@ -95,13 +98,13 @@
    "nombre": "CÁLCULO INTEGRAL",
    "pagina_inquieta": true,
    "url": "https://adecca.ubiobio.cl/curso/97852",
-   "visto": "2026-08-04 16:00"
+   "visto": "2026-08-04 21:51"
   }
  },
  "ia_claves": {
   "IA_KEY": {
-   "fallas": 1,
-   "hasta": 1785814199.9033017,
+   "fallas": 2,
+   "hasta": 1785878761.8988936,
    "marca": "bab5a7ca63",
    "motivo": "cupo"
   }
@@ -156,8 +159,8 @@
    "u": "https://adecca.ubiobio.cl/curso/97852/modulo/516377"
   }
  ],
- "panel_donde": "p:ajustes",
- "panel_id": 534,
+ "panel_donde": "p:version",
+ "panel_id": 590,
  "pendientes_ia": {},
  "perfiles": {
   "45def8adfd92342e": "apretado"
@@ -167,7 +170,7 @@
  "repo_aviso_ciego": "",
  "repo_dias": 0,
  "repo_motivo": "",
- "repo_movido": "2026-08-04T19:23:19Z",
+ "repo_movido": "2026-08-04T06:00:06Z",
  "repo_toques": 0,
  "tareas": {
   "82d857275dd68638": {
@@ -220,6 +223,39 @@
    "url": "",
    "vence": "2026-08-03 19:42"
   },
+  "mio_1785862140": {
+   "clave": "",
+   "es_tarea": false,
+   "grupo": "",
+   "hecho": true,
+   "mio": true,
+   "nota": "",
+   "titulo": "Comprar atún",
+   "url": "",
+   "vence": "2026-08-04 16:49"
+  },
+  "mio_1785867420": {
+   "clave": "",
+   "es_tarea": false,
+   "grupo": "",
+   "hecho": true,
+   "mio": true,
+   "nota": "",
+   "titulo": "Prueba",
+   "url": "",
+   "vence": "2026-08-04 18:17"
+  },
+  "mio_1785870060": {
+   "clave": "",
+   "es_tarea": false,
+   "grupo": "",
+   "hecho": true,
+   "mio": true,
+   "nota": "",
+   "titulo": "Hacer ejercicios de profe de física",
+   "url": "",
+   "vence": "2026-08-04 19:01"
+  },
   "mio_1786360440": {
    "clave": "",
    "grupo": "",
@@ -251,14 +287,14 @@
    "vence": "2026-08-10 18:45"
   }
  },
- "tg_offset": 791138992,
- "ultima_corrida": "04/08 16:00",
+ "tg_offset": 791139130,
+ "ultima_corrida": "04/08 21:51",
  "ultimo_error_ia": "no me quedan claves. clave 1 sin cupo",
- "ultimo_info": 482,
+ "ultimo_info": 559,
  "ultimo_latido": "2026-08-03",
  "ultimo_reloj": "2026-08-04",
  "ultimo_resumen": "",
  "version": 2,
- "version_avisada": "5.7",
- "version_desde": "2026-08-04 15:24"
+ "version_avisada": "5.8",
+ "version_desde": "2026-08-04 16:22"
 }
