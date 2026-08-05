@@ -186,6 +186,42 @@ def pelado(t):
     return comandos.pelado(t)
 
 
+def _sin_final(t):
+    """Saca el final del nombre ('.pdf', '.docx') si lo trae."""
+    t = str(t or "").strip()
+    punto = t.rfind(".")
+    if punto > 0 and len(t) - punto <= 6:
+        return t[:punto]
+    return t
+
+
+def _solo_letras(t):
+    """'Gu\u00eda N\u00b03.pdf' queda como 'guia n 3 pdf'.  Deja letras y numeros
+    separados por espacios, asi los signos raros no arruinan la busqueda."""
+    plano = pelado(t)
+    return " ".join("".join(c if c.isalnum() else " " for c in plano).split())
+
+
+def calza_nombre(pedido, ficha):
+    """\u00bfEs este el archivo que pediste?
+
+    El dueno escribe el nombre como lo ve en la pantalla: con tildes, con
+    'N\u00b0', con el punto y el final, o solo dos palabras sueltas.  Antes se
+    comparaba el texto tal cual y por eso escribir el nombre completo no
+    encontraba nada.  Ahora alcanza con que esten todas las palabras, en
+    cualquier orden, y se mira tambien el nombre con el que baja."""
+    pedido = _solo_letras(_sin_final(pedido))
+    if not pedido:
+        return True
+    ficha = ficha or {}
+    cola = str(ficha.get("url") or "").split("?")[0].rstrip("/").split("/")[-1]
+    donde = (_solo_letras(ficha.get("titulo", "")) + " "
+             + _solo_letras(_sin_final(cola))).strip()
+    if pedido in donde:
+        return True
+    return all(p in donde for p in pedido.split())
+
+
 def fecha_linda(f):
     return "%s %d %s %02d:%02d" % (DIAS_CORTOS[f.weekday()], f.day,
                                    MESES[f.month - 1], f.hour, f.minute)
@@ -1075,6 +1111,18 @@ class Vigilante(object):
         return avisar, cerrar
 
     # ---------------------------------------------------------- panel
+    def panel_tapado(self, mid):
+        """.Quedo el panel enterrado bajo mensajes mas nuevos?
+
+        Redibujarlo editando alla arriba, fuera de la vista, es igual a no
+        contestar: el dueno escribe /compartir, se le borra lo que escribio
+        y no aparece nada nuevo.  Ese era el silencio."""
+        try:
+            ultimo = int(getattr(N, "ULTIMO_MANDADO", 0) or 0)
+            return bool(ultimo and int(mid) < ultimo)
+        except Exception:
+            return False
+
     def dibujar_panel(self, donde=None, mensaje_id=None):
         donde = donde or self.estado.get("panel_donde") or "p:raiz"
         if donde.startswith("c:") and not donde.startswith("c:si:"):
@@ -1083,6 +1131,10 @@ class Vigilante(object):
             texto, botones = P.pantalla(self.estado, donde, self.acc)
         self.estado["panel_donde"] = donde
         mid = mensaje_id or self.estado.get("panel_id")
+        # Tapado se manda uno nuevo abajo, que es donde el dueno esta
+        # mirando: cada orden tiene que tener respuesta visible.
+        if mid and not mensaje_id and self.panel_tapado(mid):
+            mid = None
         if mid and N.editar(mid, texto, botones):
             self.estado["panel_id"] = mid
             return
@@ -1902,10 +1954,11 @@ class Vigilante(object):
         Devuelve (elegidos, cuantos_hay_en_total, como_se_dice_el_rango)."""
         d, h = rango_de_fechas(alcance, desde, hasta)
         todos = self.archivos_del_ramo(clave, frescos=frescos)
-        pedazo = pelado(nombre or "")
         elegidos = []
         for a in todos:
-            if pedazo and pedazo not in pelado(a.get("titulo", "")):
+            # Se compara por palabras y sin el final del nombre: escribir
+            # "Gu\u00eda 3.pdf" tiene que encontrar "Guia N\u00b03".
+            if nombre and not calza_nombre(nombre, a):
                 continue
             if not de_este_tipo(tipo, a.get("titulo", ""), a.get("url", "")):
                 continue
@@ -1916,6 +1969,40 @@ class Vigilante(object):
             elegidos.append(a)
         tope = getattr(CFG, "TOPE_ARCHIVOS_DE_UNA", 80)
         return elegidos[:tope], len(todos), rango_lindo(d, h)
+
+    def parecidos_a(self, clave, nombre, cuantos=4):
+        """Lo mas parecido a lo que escribiste.
+
+        Decir "no encontre nada" cuando el archivo estaba ahi con otro
+        nombre es la peor respuesta posible: el dueno no tiene forma de
+        saber si fallo el bot o si de verdad no existe."""
+        pedido = set(_solo_letras(_sin_final(nombre or "")).split())
+        if not pedido:
+            return []
+        puntajes = []
+        for a in self.archivos_del_ramo(clave, frescos=False):
+            titulo = limpio(a.get("titulo") or "")
+            if not titulo:
+                continue
+            palabras = set(_solo_letras(titulo).split())
+            if not palabras:
+                continue
+            iguales = len(pedido & palabras)
+            parecidas = sum(1 for p in pedido for q in palabras
+                            if p != q and (p in q or q in p))
+            punto = iguales * 3 + parecidas
+            if punto:
+                puntajes.append((punto, titulo))
+        puntajes.sort(key=lambda x: (-x[0], x[1]))
+        vistos, salida = set(), []
+        for _, titulo in puntajes:
+            if titulo in vistos:
+                continue
+            vistos.add(titulo)
+            salida.append(titulo[:60])
+            if len(salida) >= cuantos:
+                break
+        return salida
 
     def _bajar_uno(self, s, a):
         """Devuelve (crudo, motivo, respuesta).  Si crudo es None, el motivo
@@ -1991,6 +2078,12 @@ class Vigilante(object):
                 N.escapar(titulo), rango)
             if nombre:
                 texto += "\nBusqu\u00e9 por nombre: <b>%s</b>." % N.escapar(nombre)
+                parecidos = self.parecidos_a(clave, nombre)
+                if parecidos:
+                    texto += ("\nLo m\u00e1s parecido que tengo:\n"
+                              + "\n".join("\u2022 " + N.escapar(p)
+                                          for p in parecidos)
+                              + "\nProb\u00e1 con una sola palabra de esas.")
             if total:
                 texto += "\nS\u00ed tengo %d en otras fechas." % total
             elif anotadas:
