@@ -99,7 +99,19 @@ def cuanto_vivir(t):
 PISTAS_DESCARGA = ("/archivo/", "/archivos/", "/adjunto", "/descargar",
                    "/download", "/getfile", "/verarchivo", "/bajar",
                    "pluginfile.php", "forcedownload", "file.php",
-                   "/documento/", "/fichero")
+                   "/documento/", "/fichero",
+                   # Una de las dos plataformas publica cada archivo como una
+                   # actividad con numero, sin extension y sin ninguna de las
+                   # pistas de arriba.  Sin esto, un ramo lleno de material
+                   # contestaba "no encontre archivos".
+                   "/mod/resource/", "resource/view.php",
+                   "draftfile.php", "/mod_resource/")
+
+# Enlaces que NO son un archivo pero adentro tienen los archivos: hay que
+# entrar igual aunque el enlace no repita el numero del ramo.
+PISTAS_DE_ACTIVIDAD = ("/mod/", "/modulo/", "/actividad", "/recurso",
+                       "/seccion", "/section", "/tema/", "/unidad",
+                       "/carpeta", "/folder/", "view.php")
 
 TIPOS_DE_ARCHIVO = (("pdf", ".pdf"), ("msword", ".doc"),
                     ("wordprocessingml", ".docx"), ("ms-excel", ".xls"),
@@ -500,9 +512,17 @@ def arbol_escondido(html, base, id_ramo):
     return salida
 
 
-def _toca_profundo(id_ramo, firma_raiz):
+def _toca_profundo(id_ramo, firma_raiz, vacio=False):
     """Entrar adentro de cada actividad en cada vuelta seria maltratar la
-    plataforma.  Entro cuando la portada cambio, y cada tanto igual."""
+    plataforma.  Entro cuando la portada cambio, y cada tanto igual.
+
+    Y entro SIEMPRE si en la portada no se ve ni un archivo: un ramo que
+    parece vacio es justo el que hay que mirar por dentro.  Sin esto, el
+    material que vive adentro de una actividad tardaba horas en aparecer
+    aunque estuviera publicado hace dias."""
+    if vacio:
+        _ULTIMO_PROFUNDO[id_ramo] = {"firma": firma_raiz, "t": time.time()}
+        return True
     minutos = getattr(CFG, "MINUTOS_EXPLORACION_PROFUNDA", 20)
     ficha = _ULTIMO_PROFUNDO.get(id_ramo)
     if (ficha is None or ficha.get("firma") != firma_raiz
@@ -517,7 +537,13 @@ def _es_del_ramo(url, base, id_ramo):
     if not u.startswith(base.rstrip("/").lower()):
         return False
     rid = str(id_ramo or "")
-    return bool(rid) and rid in u
+    if rid and rid in u:
+        return True
+    # Hay una plataforma que no repite el numero del ramo en el enlace de cada
+    # actividad.  Como este enlace salio de la pagina de ESTE ramo, si tiene
+    # pinta de actividad hay que entrar: si no, el material que vive adentro
+    # de una actividad no se ve nunca.
+    return any(p in u for p in PISTAS_DE_ACTIVIDAD)
 
 
 def explorar_ramo(s, base, g):
@@ -545,7 +571,10 @@ def explorar_ramo(s, base, g):
     if escondido:
         firmas.append(huella("arbol", *sorted(x["url"] + x["titulo"] for x in escondido)))
 
-    if hondo <= 0 or not _toca_profundo(str(g.get("id")), firmas[0]):
+    hay_material = any(es_bajable(it["url"], it.get("titulo", ""))
+                       for it in items.values())
+    if hondo <= 0 or not _toca_profundo(str(g.get("id")), firmas[0],
+                                        vacio=not hay_material):
         return list(items.values()), huella("firma", *firmas)
 
     vistas = {raiz}
@@ -1697,32 +1726,132 @@ class Vigilante(object):
                 mejor, largo = f, len(u)
         return mejor
 
+    def _dudoso(self, url, titulo=""):
+        """Un enlace que no dice de que es: no parece archivo por su nombre,
+        pero vive donde la plataforma guarda el material."""
+        if not url or es_bajable(url, titulo):
+            return False
+        u = url.lower()
+        return any(p in u for p in PISTAS_DE_ACTIVIDAD)
+
+    def _que_hay_detras(self, s, url):
+        """Devuelve "archivo", "pagina", o "" cuando no se pudo saber.
+
+        Lo que no se pudo mirar NO se da por perdido: queda sin anotar para
+        volver a intentarlo despues."""
+        for metodo in ("head", "get"):
+            try:
+                if metodo == "head":
+                    r = s.head(url, timeout=12, allow_redirects=True)
+                else:
+                    r = s.get(url, timeout=15, allow_redirects=True, stream=True)
+                codigo = getattr(r, "status_code", 0)
+                tipo = (r.headers.get("Content-Type") or "").lower()
+                pegado = (r.headers.get("Content-Disposition") or "").lower()
+                if metodo == "get":
+                    try:
+                        r.close()
+                    except Exception:
+                        pass
+                if codigo >= 400:
+                    continue
+                if "attachment" in pegado or "filename" in pegado:
+                    return "archivo"
+                if tipo and "html" not in tipo and not tipo.startswith("text/"):
+                    return "archivo"
+                if tipo:
+                    return "pagina"
+            except Exception:
+                continue
+        return ""
+
+    def comprobar_dudosos(self, clave, dudosos):
+        """Le pregunta al servidor que hay detras de cada enlace raro.
+
+        La plataforma no siempre avisa en el enlace si eso es un archivo o una
+        pagina.  Antes esos enlaces se descartaban y el ramo aparecia vacio
+        aunque tuviera material: era el caso de "no encontre archivos de todo
+        el ramo" teniendo cuatro cosas anotadas.  La respuesta se guarda, asi
+        no se pregunta lo mismo cada vez, y va con tope para no castigar a la
+        plataforma ni demorar la respuesta."""
+        if not getattr(CFG, "COMPROBAR_DUDOSOS", True) or not dudosos:
+            return []
+        g = self.estado.get("grupos", {}).get(clave, {})
+        s = self.sesiones.get(g.get("fuente"))
+        if not s:
+            return []
+        libreta = self.estado.setdefault("tipos_de_enlace", {})
+        horas = max(1, getattr(CFG, "HORAS_QUE_VALE_LA_COMPROBACION", 72))
+        tope = max(1, getattr(CFG, "DUDOSOS_POR_PEDIDO", 25))
+        salida, preguntados = [], 0
+        for it in dudosos:
+            u = it.get("url") or ""
+            if not u:
+                continue
+            ficha = libreta.get(u) or {}
+            if (time.time() - ficha.get("t", 0)) < horas * 3600:
+                if ficha.get("es") == "archivo":
+                    salida.append(it)
+                continue
+            if preguntados >= tope:
+                continue
+            preguntados += 1
+            es = self._que_hay_detras(s, u)
+            if es:
+                libreta[u] = {"es": es, "t": time.time()}
+            if es == "archivo":
+                salida.append(it)
+        # La libreta no puede crecer para siempre: se van los mas viejos.
+        if len(libreta) > 900:
+            viejos = sorted(libreta.items(), key=lambda x: x[1].get("t", 0))
+            for u, _f in viejos[:len(libreta) - 900]:
+                libreta.pop(u, None)
+        return salida
+
     def archivos_del_ramo(self, clave, frescos=True):
         """Todo lo que en este ramo se puede bajar de verdad.
 
         Junta las dos listas que antes no coincidian: lo anotado en la memoria
         y lo que hay ahora en la plataforma.  Un enlace sin extension, del
-        tipo /archivo/8891, tambien entra: para eso esta es_bajable."""
+        tipo /archivo/8891, tambien entra: para eso esta es_bajable.  Y lo que
+        queda en duda se le pregunta al servidor antes de descartarlo."""
         fechas = {}
         for n in self.estado.get("novedades", []):
             if n.get("c") == clave and n.get("u"):
                 fechas.setdefault(n["u"], n.get("f", ""))
-        salida = {}
+        salida, dudosos = {}, []
         for n in self.estado.get("novedades", []):
             if n.get("c") != clave or not n.get("u"):
                 continue
             if n.get("tipo") == "archivo" or es_bajable(n["u"], n.get("t", "")):
                 salida[n["u"]] = {"url": n["u"], "titulo": n.get("t") or "archivo",
                                   "cuando": n.get("f", "")}
+            elif self._dudoso(n["u"], n.get("t", "")):
+                dudosos.append({"url": n["u"], "titulo": n.get("t") or "archivo",
+                                "cuando": n.get("f", "")})
         if frescos:
             for it in self.leer_ramo_ahora(clave):
                 u = it.get("url") or ""
                 if not u or u in salida:
                     continue
                 if not es_bajable(u, it.get("titulo", "")):
+                    if self._dudoso(u, it.get("titulo", "")):
+                        dudosos.append(
+                            {"url": u, "titulo": it.get("titulo") or "archivo",
+                             "cuando": self._fecha_heredada(u, fechas)})
                     continue
                 salida[u] = {"url": u, "titulo": it.get("titulo") or "archivo",
                              "cuando": self._fecha_heredada(u, fechas)}
+            faltan = [d for d in dudosos if d["url"] not in salida]
+            for it in self.comprobar_dudosos(clave, faltan):
+                salida.setdefault(it["url"], it)
+        else:
+            # Sin tocar la red vale lo que ya se pregunto antes, asi el numero
+            # que muestra el panel no puede contradecir a la lista de material.
+            libreta = self.estado.get("tipos_de_enlace", {})
+            for d in dudosos:
+                if (libreta.get(d["url"]) or {}).get("es") == "archivo":
+                    salida.setdefault(d["url"], d)
         return sorted(salida.values(), key=lambda x: x.get("cuando") or "",
                       reverse=True)
 
@@ -1856,6 +1985,49 @@ class Vigilante(object):
 
         self.mandar_archivos(clave, elegidos, rango)
 
+    def como_mando_el_material(self):
+        """Sueltos, en paquete, o que decida solo. Lo elige el dueno."""
+        modo = self.cfg().get("material") or getattr(
+            CFG, "MODO_ENVIO_MATERIAL", "auto")
+        return modo if modo in ("auto", "suelto", "paquete") else "auto"
+
+    def van_juntos(self, cuantos):
+        """Pocos archivos se abren mejor de a uno; muchos tapan el chat."""
+        if cuantos < 2:
+            return False
+        modo = self.como_mando_el_material()
+        if modo == "suelto":
+            return False
+        if modo == "paquete":
+            return True
+        return cuantos > max(1, getattr(CFG, "SUELTOS_HASTA", 4))
+
+    def armar_paquete(self, titulo, listos):
+        """Un solo archivo con todo adentro, sin nombres repetidos."""
+        import io
+        import zipfile
+        datos = io.BytesIO()
+        usados = {}
+        try:
+            with zipfile.ZipFile(datos, "w", zipfile.ZIP_DEFLATED) as z:
+                for como, crudo, _a in listos:
+                    base = como or "archivo"
+                    veces = usados.get(base, 0) + 1
+                    usados[base] = veces
+                    nombre = base
+                    if veces > 1:
+                        raiz, punto, ext = base.rpartition(".")
+                        nombre = ("%s (%d).%s" % (raiz, veces, ext) if punto
+                                  else "%s (%d)" % (base, veces))
+                    z.writestr(nombre, crudo)
+        except Exception as e:
+            log("[!] armando el paquete: %s" % type(e).__name__)
+            return None, ""
+        etiqueta = re.sub(r"[^0-9a-z]+", "_", pelado(titulo))[:40].strip("_")
+        como = "%s_%s_%s.zip" % (getattr(CFG, "NOMBRE_DEL_PAQUETE", "material"),
+                                 etiqueta or "ramo", ahora().strftime("%d-%m"))
+        return datos.getvalue(), como
+
     def mandar_archivos(self, clave, elegidos, rango=""):
         """Los baja y los manda por tandas.  Nunca manda el mismo dos veces y
         nunca deja una falla callada."""
@@ -1876,6 +2048,7 @@ class Vigilante(object):
         cada = max(1, getattr(CFG, "AVISAR_AVANCE_CADA", 10))
         tope = CFG.PESO_ADJUNTO_MB * 1024 * 1024
         mandados, repetidos, fallados, huellas = 0, 0, [], set()
+        listos, en_paquete = [], False
 
         for i, a in enumerate(elegidos, 1):
             avisar("bajando %d de %d" % (i, total))
@@ -1892,16 +2065,38 @@ class Vigilante(object):
                 fallados.append((a, "pesa %s y la mensajer\u00eda aguanta %d MB"
                                  % (peso_lindo(len(crudo)), CFG.PESO_ADJUNTO_MB)))
                 continue
-            como = nombre_de_archivo(r, a["url"], a.get("titulo", "archivo"))
-            if N.mandar_documento(como, crudo, silencioso=True):
-                mandados += 1
-            else:
-                fallados.append((a, "la mensajer\u00eda no lo acept\u00f3"))
-            if mandados and mandados % cada == 0 and mandados < total:
-                avisar("van %d de %d" % (mandados, total))
+            listos.append((nombre_de_archivo(r, a["url"],
+                                             a.get("titulo", "archivo")), crudo, a))
+
+        # Pocos archivos van tal cual, asi se abren de una desde el telefono.
+        # Muchos van en un solo paquete, porque veinte mensajes seguidos tapan
+        # el chat y despues no encontras nada.  Si el paquete no se pudo armar
+        # o pesa demasiado, no se pierde nada: salen sueltos igual.
+        if self.van_juntos(len(listos)):
+            avisar("armando el paquete con %d archivos" % len(listos))
+            paquete, como = self.armar_paquete(titulo, listos)
+            if paquete and len(paquete) <= tope and N.mandar_documento(
+                    como, paquete,
+                    leyenda="\U0001F4E6 %d archivos de %s"
+                    % (len(listos), N.escapar(titulo)), silencioso=True):
+                mandados, en_paquete = len(listos), True
+
+        if not en_paquete:
+            for como, crudo, a in listos:
+                if N.mandar_documento(como, crudo, silencioso=True):
+                    mandados += 1
+                else:
+                    fallados.append((a, "la mensajer\u00eda no lo acept\u00f3"))
+                if mandados and mandados % cada == 0 and mandados < total:
+                    avisar("van %d de %d" % (mandados, total))
 
         lineas = []
-        if mandados:
+        if mandados and en_paquete:
+            lineas.append("\U0001F4E6 Te mand\u00e9 los <b>%d</b> archivos de <b>%s</b> "
+                          "en un solo paquete" % (mandados, N.escapar(titulo)))
+            lineas.append("Toc\u00e1ndolo se abre y ves todo adentro. Si los prefer\u00eds "
+                          "de a uno, cambialo en Ajustes \u2192 M\u00e1s.")
+        elif mandados:
             lineas.append("\U0001F4E5 Te mand\u00e9 <b>%d</b> de %d archivo%s de <b>%s</b>"
                           % (mandados, total, "" if total == 1 else "s",
                              N.escapar(titulo)))
@@ -2073,14 +2268,18 @@ class Vigilante(object):
         if not self.cfg().get("ia", True):
             return "los res\u00famenes est\u00e1n apagados, prend\u00e9los con /ia on"
         if not IA.claves():
-            return ("no hay ninguna clave de IA cargada. Cargala en los Secrets "
-                    "como IA_KEY")
+            return ("no tengo ninguna clave de IA guardada, as\u00ed que no puedo "
+                    "resumir")
         if not IA.disponible(self.estado):
-            return ("todas las claves est\u00e1n descansando \u00b7 %s"
-                    % IA.como_van_las_claves(self.estado))
+            return IA.cuando_vuelve(self.estado)
         motivo = self.estado.get("ultimo_error_ia", "")
         if motivo:
-            return "%s. Prob\u00e1 de nuevo en un rato" % motivo[:100]
+            # Si el motivo ya dice cuando vuelve, no lo contradigo con un
+            # "proba en un rato" que sonaria a que es cosa de minutos.
+            corto = motivo[:130].rstrip(". ")
+            if "ma\u00f1ana" in corto or "hora" in corto:
+                return corto
+            return "%s. Prob\u00e1 de nuevo en un rato" % corto
         return "no me lleg\u00f3 respuesta esta vez, prob\u00e1 de nuevo en un rato"
 
     # ---------------------------------------------------------- a pedido
@@ -2463,8 +2662,11 @@ class Vigilante(object):
             # una alarma que suena siempre se apaga.
             urgente = bool(a.get("urgente"))
             suena = urgente and getattr(CFG, "AVISOS_SUENAN_DE_NOCHE", True)
-            if a.get("importante") and getattr(
-                    CFG, "IMPORTANTES_SUENAN_DE_NOCHE", False):
+            # Vos pediste poder elegirlo: por defecto no suenan de madrugada,
+            # pero se prende desde Ajustes sin tocar nada del programa.
+            if a.get("importante") and self.cfg().get(
+                    "noche_importantes",
+                    getattr(CFG, "IMPORTANTES_SUENAN_DE_NOCHE", False)):
                 suena = True
             callado = self.en_silencio() and not suena
 
@@ -2860,22 +3062,38 @@ class Vigilante(object):
     #  resumen periodico y latido
     # =================================================================
     def recordar_sin_ver(self):
-        """Un solo empujon por cosa: si a las tantas horas no la marcaste
-        vista, te lo recuerda una vez y no jode mas."""
+        """Te lo recuerda hasta que lo marques visto, no una sola vez.
+
+        Vos elegiste insistir antes que perderte algo.  Igual hay tope de
+        veces y hay que dejar pasar las mismas horas entre empujon y empujon,
+        porque un recordatorio que aparece a cada rato se vuelve invisible."""
         horas = getattr(CFG, "HORAS_PARA_RECORDAR_VISTO", 0)
         if not horas or self.en_pausa() or self.en_silencio():
             return
+        insistir = getattr(CFG, "INSISTIR_HASTA_VISTO", False)
+        tope = max(1, getattr(CFG, "VECES_PARA_RECORDAR_VISTO", 1))
         hoy = ahora()
         pendientes = []
         for idt, t in self.estado.get("tareas", {}).items():
-            if t.get("hecho") or t.get("recordado") or t.get("mio") or t.get("de_agenda"):
+            if t.get("hecho") or t.get("mio") or t.get("de_agenda"):
                 continue
             if t.get("es_tarea", True):
                 continue          # esas ya avisan por su fecha de entrega
             if self.callado(t.get("clave", "")):
                 continue
+            # Una memoria vieja trae solo "recordado": eso vale como un empujon.
+            veces = int(t.get("empujones") or 0)
+            if not veces and t.get("recordado"):
+                veces = 1
+            if veces and not insistir:
+                continue
+            if veces >= tope:
+                continue
             nacio = leer_fecha(t.get("nacio"))
             if not nacio or (hoy - nacio).total_seconds() < horas * 3600:
+                continue
+            ultimo = leer_fecha(t.get("ultimo_empujon")) or nacio
+            if veces and (hoy - ultimo).total_seconds() < horas * 3600:
                 continue
             pendientes.append(t)
         if not pendientes:
@@ -2894,7 +3112,10 @@ class Vigilante(object):
             return          # no salio: no marco nada y se reintenta
         # Marco DESPUES de mandar, asi el empujoncito no se pierde callado.
         for t in pendientes:
+            previos = int(t.get("empujones") or (1 if t.get("recordado") else 0))
+            t["empujones"] = previos + 1
             t["recordado"] = True
+            t["ultimo_empujon"] = hoy.strftime("%Y-%m-%d %H:%M")
 
     def _toca_ahora(self, dia, hora, ultimo_guardado):
         hoy = ahora()
@@ -3209,6 +3430,38 @@ class Vigilante(object):
         self.guardar()
         log("[i] avise la version %s" % actual)
 
+    def avisar_primera_vez(self):
+        """La primera vez no inunda ni se queda callado.
+
+        Avisar cada cosa vieja era doscientos mensajes de golpe; no avisar nada
+        dejaba la duda de si mir\u00f3 algo.  Un resumen corto de lo ultimo que
+        encontro resuelve las dos cosas."""
+        if not getattr(CFG, "RESUMEN_DE_PRIMERA_VEZ", True):
+            return
+        cuantas = max(1, getattr(CFG, "COSAS_EN_EL_RESUMEN_INICIAL", 8))
+        todas = self.estado.get("novedades", []) or []
+        mios = todas[:cuantas]
+        if not mios:
+            return
+        por_ramo = {}
+        for n in mios:
+            por_ramo.setdefault(n.get("g") or "Sin ramo", []).append(n)
+        filas = ["\U0001F4CB <b>Lo \u00faltimo que encontr\u00e9</b>",
+                 "<i>Esto ya estaba, no te lo voy a avisar de nuevo.</i>", ""]
+        for ramo, cosas in list(por_ramo.items())[:6]:
+            filas.append("<b>%s</b>" % N.escapar(ramo))
+            for c in cosas[:3]:
+                titulo = c.get("t") or "algo"
+                filas.append("\u2022 " + (N.enlace(titulo, c["u"]) if c.get("u")
+                                          else N.escapar(titulo)))
+            filas.append("")
+        if len(todas) > len(mios):
+            filas.append("<i>Y %d cosas m\u00e1s guardadas, las ten\u00e9s en "
+                         "Novedades.</i>" % (len(todas) - len(mios)))
+        N.enviar("\n".join(filas).strip(), silencioso=True,
+                 botones=N.teclado([[("\U0001F4E5 Novedades", "p:nov"),
+                                     ("\U0001F431 Panel", "p:raiz")]]))
+
     def arranque(self):
         N.publicar_menu(comandos.MENU)
         self.avisar_version()
@@ -3221,6 +3474,7 @@ class Vigilante(object):
                      "Anot\u00e9 %d ramos y lo que ya hab\u00eda dentro, sin avisarte de "
                      "cada cosa vieja.\nDesde ahora te aviso solo lo nuevo."
                      % d["ramos"], teclado_fijo=True)
+            self.avisar_primera_vez()
             self.abrir_panel()
             if self.gist_nuevo:
                 N.enviar("Guard\u00e9 la memoria en un gist privado nuevo. "
