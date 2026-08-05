@@ -115,7 +115,8 @@ ORDEN_ACCION = (
     '{"accion":"resumen","ramo":"nombre"}\n'
     '{"accion":"buscar_archivos","ramo":"nombre o vacio",'
     '"desde":"AAAA-MM-DD","hasta":"AAAA-MM-DD",'
-    '"nombre":"parte del nombre o vacio","tipo":"pdf|doc|ppt|xls|todo"}\n'
+    '"nombre":"parte del nombre o vacio","tipo":"pdf|doc|ppt|xls|todo",'
+    '"ultimo":"uno|dia|vacio"}\n'
     '{"accion":"hecho","tarea":"titulo o parte del titulo"}\n'
     '{"accion":"noche"}\n'
     '{"accion":"ninguna"}\n\n'
@@ -130,6 +131,11 @@ ORDEN_ACCION = (
     "hay: solo traducis el pedido. Si no dijo fechas, deja desde y hasta "
     "vacios. Si dijo la semana pasada o el ultimo mes, calcula las fechas "
     "contra el AHORA.\n"
+    '- Si pide "el ultimo archivo", "lo ultimo que subieron" o "el ultimo que '
+    'me pasaron", usa buscar_archivos con "ultimo":"uno". Si pide "lo del '
+    'ultimo dia", "lo de la ultima clase" o "lo de ayer de tal ramo", usa '
+    '"ultimo":"dia". En los dos casos deja desde y hasta vacios: las fechas '
+    "las resuelve el programa, no vos.\n"
     "- Contesta siempre en castellano, nunca en ingles.\n"
     '- Ante la menor duda, accion "ninguna".'
 )
