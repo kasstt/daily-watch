@@ -7,11 +7,41 @@ mensaje NO se borra.  Ademas lo podes ver cuando quieras en
 Ajustes -> Version y novedades, o escribiendo /version.
 """
 
-VERSION = "6.0"
-FECHA = "05-08-2026 09:40"
-TITULO = "cuarta revision: quien entra al bot, la IA que por fin contesta y el material como vos lo pediste"
+VERSION = "6.1"
+FECHA = "05-08-2026 12:30"
+TITULO = "quinta revision: se acabaron los silencios, la IA contesta de verdad y tu memoria sale de la vista de todos"
 
 CAMBIOS = [
+    "LO MAS IMPORTANTE: tu memoria (los ramos, los avisos, tus pendientes) "
+    "se estaba guardando dentro del repositorio, y ese repositorio esta "
+    "abierto: cualquiera que supiera la direccion podia leerla. Ya la saque "
+    "de ahi, y esa copia de seguridad solo vuelve a hacerse el dia que lo "
+    "pongas privado. Nada tuyo se publica mas.",
+    "LO MAS IMPORTANTE: apretabas /compartir y el bot se quedaba mudo. No "
+    "estaba roto: te redibujaba el panel alla arriba, en un mensaje viejo "
+    "que ya no tenias a la vista, y abajo no pasaba nada. Ahora, si el panel "
+    "quedo tapado, te lo manda de nuevo al final del chat. Ninguna orden se "
+    "queda sin respuesta visible.",
+    "La ayuda de IA decia 'no me queda cupo' aunque estrenaras claves. Eran "
+    "dos problemas: el cupo gratis se cuenta por modelo y el bot se rendia "
+    "con el primero sin probar los de repuesto; y ademas cualquier apuro de "
+    "un minuto lo hacia creer que se habia acabado el dia entero. Ahora "
+    "prueba todos los modelos antes de rendirse, y solo se toma el resto del "
+    "dia cuando de verdad se acabo.",
+    "Buscabas un archivo escribiendo su nombre completo, tal cual lo ves, y "
+    "te contestaba que no habia nada. Comparaba letra por letra, asi que una "
+    "tilde o el '.pdf' del final lo arruinaban. Ahora busca por palabras y, "
+    "si igual no lo encuentra, te muestra lo mas parecido que tiene en vez "
+    "de dejarte con las manos vacias.",
+    "El programa que revisa las plataformas de punta a punta trabajaba un "
+    "buen rato y se caia justo al final, sin dejarte el informe. Ya termina "
+    "entero.",
+    "Si una pantalla se rompe, ya no te muestra el nombre tecnico de la "
+    "falla: te dice en castellano que pruebes de nuevo y guarda el detalle "
+    "aparte para que yo lo revise.",
+    "Cuando el actualizador no puede subir el archivo del reloj, ahora te "
+    "explica que a tu clave le falta un permiso, en vez de mostrarte un "
+    "numero suelto.",
     "LO MAS IMPORTANTE: le dabas a 'descargar todo' en un ramo con dos "
     "archivos y te llegaba una sola cosa comprimida, que en el telefono no "
     "se abre. No era el bot juntandolos: era la plataforma, que entrega su "
