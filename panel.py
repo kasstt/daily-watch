@@ -383,8 +383,60 @@ def _mas(estado, acc):
         [("\U0001F4E8 Otras secciones", "p:afuera"),
          ("\u23F3 Reloj de GitHub", "a:reloj")],
         [("\U0001F4C4 Material: %s" % _como_llega(estado), "t:material")],
+        [("\U0001F465 Qui\u00e9n puede usar el bot", "p:gente")],
+        [("\U0001F9E0 Probar la ayuda de IA", "a:probar_ia")],
         [("\u2B05\uFE0F Volver", "p:ajustes")],
     ])
+
+
+def _gente(estado, acc):
+    """La pantalla que contesta "y si mi bot se empieza a compartir solo?".
+
+    De un vistazo: a quien le hace caso el bot, quien recibe material tuyo, y
+    quien intento escribirle sin permiso.  Todo se corta desde aca.
+    """
+    personas = list((estado.get("personas") or {}).items())
+    curiosos = list((estado.get("desconocidos") or {}).items())
+    curiosos.sort(key=lambda x: x[1].get("veces", 0), reverse=True)
+
+    lineas = ["\U0001F465 <b>Qui\u00e9n puede usar el bot</b>", "",
+              "El bot le hace caso a <b>un solo tel\u00e9fono</b>: el tuyo. Si otra "
+              "persona le escribe o le toca un bot\u00f3n, no le contesta ni le "
+              "muestra nada, aunque tenga el enlace del bot.", ""]
+    if personas:
+        lineas.append("<b>Reciben material tuyo</b>")
+        lineas.append("<i>Solo los ramos que vos abriste, y solo t\u00edtulo, fecha "
+                      "y enlace. Nunca tus notas ni tus pendientes.</i>")
+        for _pid, f in personas[:8]:
+            ramos = len(f.get("ramos") or [])
+            lineas.append("\u2022 %s \u00b7 %s" % (
+                N.escapar(str(f.get("alias", "?"))[:20]),
+                "bloqueada" if f.get("bloqueada") else (
+                    "%d ramo%s abierto%s" % (ramos, "" if ramos == 1 else "s",
+                                             "" if ramos == 1 else "s")
+                    if ramos else "sin nada abierto")))
+    else:
+        lineas.append("No le compartiste material a nadie.")
+    if curiosos:
+        lineas.append("")
+        lineas.append("<b>Le escribieron sin permiso</b>")
+        for _q, f in curiosos[:5]:
+            veces = f.get("veces", 0)
+            lineas.append("\u2022 %s \u00b7 %d vez%s%s" % (
+                N.escapar(str(f.get("nombre") or "sin nombre")[:20]), veces,
+                "" if veces == 1 else "es",
+                " \u00b7 silenciada" if f.get("bloqueado") else ""))
+        lineas.append("<i>Ninguna recibi\u00f3 respuesta.</i>")
+
+    # Estos dos botones estan SIEMPRE, aunque el bot crea que no hay nadie:
+    # el dia que sospeches algo raro no vas a querer que el boton de cortar
+    # aparezca solo si el bot ya se dio cuenta.
+    filas = [[("\U0001F91D Elegir qu\u00e9 ve cada uno", "p:comp")],
+             [("\U0001F512 Cortar todo lo compartido", "a:cerrar_compartir")]]
+    if curiosos:
+        filas.append([("\U0001F9F9 Borrar esta lista", "g:limpiar")])
+    filas.append([("\u2B05\uFE0F Volver", "p:mas")])
+    return "\n".join(lineas), N.teclado(filas)
 
 
 def _compartir(estado, acc):
@@ -399,6 +451,7 @@ def _compartir(estado, acc):
                        "p:per:" + str(pid))])
     if estado.get("personas"):
         filas.append([("\U0001F512 Cerrar todo", "a:cerrar_compartir")])
+    filas.append([("\U0001F465 Qui\u00e9n puede usar el bot", "p:gente")])
     filas.append([("\u2B05\uFE0F Volver", "p:mas")])
     return texto, N.teclado(filas)
 
@@ -545,6 +598,8 @@ def pantalla(estado, donde, acc):
             return _ajustes(estado, acc)
         if donde == "p:mas":
             return _mas(estado, acc)
+        if donde == "p:gente":
+            return _gente(estado, acc)
         if donde == "p:comp":
             return _compartir(estado, acc)
         if donde.startswith("p:per:"):
@@ -606,7 +661,7 @@ def _rotar_perfil(actual):
 # usuario, no dibujarle el panel encima de la tarjeta que estaba mirando.
 PREFIJOS_CONOCIDOS = ("p:", "r:", "z:", "pv:", "pn:", "pb:",
                       "rl:", "rm:", "rx:", "ql:", "qm:", "qx:",
-                      "tc:", "tq:", "t:", "c:si:", "d:", "h:")
+                      "tc:", "tq:", "t:", "c:si:", "d:", "h:", "g:")
 
 
 def reconoce(dato):
@@ -719,6 +774,18 @@ def toque(estado, dato, acc, ahora):
                           "mov\u00ed %s" % titulo, volver, nuevo_id=nuevo)
         return ("\u23F0 Mov\u00ed %s a las %s. Si fue sin querer, apret\u00e1 "
                 "Deshacer." % (titulo, f.strftime("%H:%M"))), volver
+
+    # ---- quien puede usar el bot
+    if dato.startswith("g:no:"):
+        quien = dato[5:]
+        ficha = estado.setdefault("desconocidos", {}).setdefault(
+            quien, {"veces": 0, "avisos": 0, "nombre": "", "bloqueado": False})
+        ficha["bloqueado"] = True
+        return "Listo, no te aviso m\u00e1s de esa persona", "p:gente"
+    if dato == "g:limpiar":
+        # No se pierde nada tuyo: es solo la lista de quienes escribieron.
+        estado["desconocidos"] = {}
+        return "Lista borrada", "p:gente"
 
     # ---- compartir: abrir o cerrar UN ramo para UNA persona
     if dato.startswith("tc:"):
