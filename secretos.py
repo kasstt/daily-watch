@@ -17,6 +17,10 @@ CLAVES = [
     "CAL_URL_B",
     "TG_TOKEN", "TG_CHAT",
     "GH_TOKEN", "IA_KEY",
+    # Claves de repuesto para los resumenes: si la primera se queda sin cupo,
+    # el bot pasa sola a la siguiente.  Todas son opcionales.
+    "IA_KEY_2", "IA_KEY_3", "IA_KEY_4", "IA_KEY_5", "IA_KEYS",
+    "IA_KEY_2_PROVEEDOR", "IA_KEY_2_MODELO", "IA_KEY_2_URL",
     "GH_REPO",          # solo para el actualizador: usuario/repositorio
     "GH_RAMA",          # solo para el actualizador: casi siempre main
     "GIST_ID",          # opcional: si va vacio, el bot crea el gist solo
