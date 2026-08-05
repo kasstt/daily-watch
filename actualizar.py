@@ -446,6 +446,13 @@ def main():
         else:
             fallados.append((ruta, detalle))
             print("    FALLO     %s   %s" % (ruta, detalle))
+            # GitHub protege aparte la carpeta del reloj: si a la clave le
+            # falta esa casilla contesta "no existe", que confunde muchisimo
+            # porque el archivo SI existe.
+            if "404" in str(detalle) and ruta.replace("\\", "/").startswith(
+                    ".github/"):
+                print("              (no es que falte: a la clave le falta")
+                print("               la casilla  workflow  para tocar esto)")
 
     titulo("RESULTADO")
     print("subidos: %d" % len(subidos))
@@ -457,6 +464,12 @@ def main():
             print("  %s -> %s" % (ruta, detalle))
         print("\nSi dice 403: a la clave le falta la casilla  repo.")
         print("Si dice 409: alguien toco el repositorio, volve a correr esto.")
+        print("Si dice 404 en un archivo de  .github/workflows :")
+        print("  el archivo existe; lo que falta es la casilla  workflow")
+        print("  en tu clave. Marcala y volve a correr esto, o abri ese")
+        print("  archivo en la web de GitHub y pega el contenido a mano.")
+        print("Si dice 404 en cualquier otro archivo: revisa que el nombre")
+        print("  del repositorio este bien escrito.")
         return 1
 
     if subidos:
