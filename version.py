@@ -7,11 +7,52 @@ mensaje NO se borra.  Ademas lo podes ver cuando quieras en
 Ajustes -> Version y novedades, o escribiendo /version.
 """
 
-VERSION = "5.8"
-FECHA = "04-08-2026 22:10"
-TITULO = "segunda revision: el recordatorio de entregas volvio a funcionar"
+VERSION = "5.9"
+FECHA = "05-08-2026 00:20"
+TITULO = "tercera revision: el material que estaba ahi y el bot no veia"
 
 CAMBIOS = [
+    "LO MAS IMPORTANTE: un ramo podia tener material subido hace DIAS y el "
+    "bot te decia que no habia ni un archivo. Pasaban dos cosas: muchos "
+    "enlaces de material no terminan en .pdf y el bot los descartaba por el "
+    "nombre; y cuando un ramo se veia vacio, se conformaba con la portada y "
+    "solo entraba a mirar por dentro cada tanto. Ahora los reconoce igual, y "
+    "un ramo que parece vacio se revisa por dentro en cada vuelta, hasta "
+    "encontrar lo que hay.",
+    "Cuando un enlace no dice de que es, ahora el bot le pregunta a la "
+    "plataforma si es algo para bajar o una pagina para leer, y se acuerda de "
+    "la respuesta por unos dias para no preguntar dos veces lo mismo. Antes "
+    "adivinaba por el nombre y se le escapaban guias enteras.",
+    "El numero que muestra el panel y la lista de material ya no se pueden "
+    "contradecir. Antes te decia '4 cosas guardadas' arriba y 'no encontre "
+    "archivos' abajo, en la misma pantalla.",
+    "Las claves de repuesto de la IA no le llegaban al bot cuando corre solo. "
+    "Cargabas la segunda y el bot seguia usando una sola: en cuanto se "
+    "acababa el cupo del dia te quedabas sin resumenes igual. Ahora si las "
+    "recibe, y la de repuesto puede ser incluso de otro servicio de IA.",
+    "Los mensajes de la IA ahora se entienden. En vez de 'clave 1 sin cupo' "
+    "te dice 'hoy ya se me acabo el cupo de resumenes, vuelve manana'. Y si "
+    "el limite es por dia, espera hasta el otro dia en vez de reintentar cada "
+    "hora sin sentido.",
+    "Como te llega el material: hasta 4 archivos te llegan de a uno y en su "
+    "formato de siempre, asi los abris de un toque. De 5 en adelante, en un "
+    "solo paquete para no taparte el chat. Lo podes elegir vos en Ajustes y "
+    "despues Mas: de a uno, en paquete, o que decida el bot. Si el paquete no "
+    "se puede mandar, te llegan igual de a uno: no se pierde ningun archivo.",
+    "Lo que no marcaste visto te lo vuelve a recordar, una vez por dia y "
+    "hasta cuatro veces. Antes lo nombraba una sola vez y si te distraias, "
+    "quedaba enterrado.",
+    "El primer arranque con la memoria vacia ya no es una loteria: te manda "
+    "un resumen corto y sin sonido de lo que encontro, con un boton para ver "
+    "el resto. Antes o te llenaba el chat con cosas viejas o no decia nada.",
+    "Ahora vos decidis si los avisos de prueba, entrega o asistencia te "
+    "suenan de madrugada. Esta en la pantalla de Avisos.",
+    "Herramienta nueva de revision, para correr a mano en tu computadora "
+    "cuando algo no aparece: recorre las dos plataformas de punta a punta y "
+    "deja un informe SIN tus datos (sin usuario, sin clave, sin direcciones y "
+    "sin correos) para poder seguir afinando la busqueda de material. No "
+    "escribe nada en las plataformas ni toca la memoria del bot.",
+
     "LO MAS IMPORTANTE: los recordatorios de las entregas NO te estaban "
     "llegando. Ni uno. Cada vez que el bot revisaba tus ramos se tropezaba "
     "justo en esa parte y se quedaba callado, y de paso se saltaba el resumen, "
