@@ -1318,12 +1318,29 @@ class Vigilante(object):
             tipo = str(orden.get("tipo", "todo") or "todo").strip().lower()
             if tipo not in GRUPOS_DE_TIPO:
                 tipo = "todo"
+            # "el ultimo archivo" y "lo del ultimo dia": la IA solo avisa
+            # que pediste eso; la fecha exacta la busca el programa.
+            ultimo = pelado(str(orden.get("ultimo", "") or ""))
+            if ultimo in ("1", "true", "si", "uno", "archivo", "ultimo"):
+                ultimo = "uno"
+            elif ultimo in ("dia", "jornada", "ultimo_dia", "clase"):
+                ultimo = "dia"
+            else:
+                ultimo = ""
             alcance = "" if (desde or hasta) else getattr(
                 CFG, "ALCANCE_POR_DEFECTO", "semana")
+            if ultimo and not (desde or hasta):
+                # Lo ultimo puede ser de hace un mes: mirar solo la ultima
+                # semana seria decir "no hay nada" teniendo el archivo.
+                alcance = "todo"
             # Buscar, contar y medir es trabajo del programa.  La IA solo dijo
             # ramo, fechas, nombre y tipo.
             elegidos, total, rango = self.filtrar_archivos(
                 clave, alcance, desde, hasta, nombre, tipo)
+            if ultimo and elegidos:
+                elegidos, desde, hasta, nombre, rango = self._solo_lo_ultimo(
+                    elegidos, ultimo, nombre)
+                alcance = ""
             if not elegidos:
                 texto = "En <b>%s</b> no encontr\u00e9 archivos %s." % (
                     N.escapar(aviso), rango)
@@ -1390,6 +1407,15 @@ class Vigilante(object):
                     if self.cfg()["noche"] else "\U0001F319 Ahora sueno a cualquier hora.")
         if que == "resumen":
             self.resumen_ramo(plan["clave"])
+            return ""
+        if que in ("mandar_sueltos", "mandar_paquete"):
+            # Vale para este pedido nomas: no te cambia la preferencia fija.
+            self.cfg()["material_una_vez"] = ("suelto" if que == "mandar_sueltos"
+                                              else "paquete")
+            self.pedir_archivos(plan["clave"], plan.get("alcance") or "",
+                                plan.get("desde", ""), plan.get("hasta", ""),
+                                plan.get("nombre", ""), plan.get("tipo", "todo"),
+                                confirmado=True)
             return ""
         if que == "mandar_archivos":
             self.pedir_archivos(plan["clave"], plan.get("alcance") or "",
@@ -1567,7 +1593,7 @@ class Vigilante(object):
             return
         self._pedir_confirmacion(plan, aviso, cerrar=cerrar)
 
-    def nueva_marca_de_propuesta(self, plan):
+    def nueva_marca_de_propuesta(self, plan, junto_a=""):
         """Guarda la propuesta y devuelve su marca, para que el boton apunte
         exactamente a ESTA y no a la que venga despues."""
         # Un numero que sube de a uno, no la hora: dos pedidos seguidos en el
@@ -1577,8 +1603,15 @@ class Vigilante(object):
         n = int(self.estado.get("propuesta_n") or 0) + 1
         self.estado["propuesta_n"] = n % 100000000
         marca = "%d" % n
+        # Una misma pregunta puede ofrecer varios botones (mandalos / de a
+        # uno / en un paquete).  Si solo quedara guardado el ultimo, los
+        # otros dos contestarian "ese boton era de un pedido anterior" y no
+        # harian nada: el dueno toca y no pasa nada, que es la peor falla.
+        anterior = self.estado.get("propuesta") or {}
+        planes = dict(anterior.get("planes") or {}) if junto_a else {}
+        planes[marca] = plan
         self.estado["propuesta"] = {"plan": plan, "cuando": time.time(),
-                                    "id": marca}
+                                    "id": marca, "planes": planes}
         return marca
 
     def confirmar_propuesta(self, si=True, marca=""):
@@ -1588,7 +1621,10 @@ class Vigilante(object):
             self.estado.pop("propuesta", None)
             return "Esa propuesta ya venci\u00f3. Ped\u00edmelo de nuevo."
         guardada = str(p.get("id") or "")
-        if marca and guardada and str(marca) != guardada:
+        # Los botones hermanos de la MISMA pregunta valen todos; los de una
+        # pregunta vieja siguen sin valer, que es lo que se queria evitar.
+        elegido = (p.get("planes") or {}).get(str(marca)) if marca else None
+        if marca and guardada and str(marca) != guardada and not elegido:
             return ("Ese bot\u00f3n era de un pedido anterior. Despu\u00e9s me "
                     "pediste otra cosa, as\u00ed que no toqu\u00e9 nada: "
                     "ped\u00edmelo de nuevo.")
@@ -1597,7 +1633,7 @@ class Vigilante(object):
             self.guardar()
             return "\u274C Listo, no hice nada."
         try:
-            salida = self.ejecutar_plan(p["plan"])
+            salida = self.ejecutar_plan(elegido or p["plan"])
         except Exception as e:
             log("[!] no pude ejecutar el plan: %s" % e)
             return "No pude hacerlo. Prob\u00e1 con el comando."
@@ -1971,16 +2007,26 @@ class Vigilante(object):
             return
 
         if not confirmado and len(elegidos) >= getattr(CFG, "PREGUNTAR_DESDE", 6):
+            # Tres botones para mandar, no uno: asi elegis en el momento como
+            # los queres recibir sin tener que entrar a los ajustes.
+            base = {"clave": clave, "alcance": alcance or "", "desde": desde or "",
+                    "hasta": hasta or "", "nombre": nombre or "",
+                    "tipo": tipo or "todo"}
+            suelto = self.nueva_marca_de_propuesta(
+                dict(base, accion="mandar_sueltos"))
+            paquete = self.nueva_marca_de_propuesta(
+                dict(base, accion="mandar_paquete"), junto_a=suelto)
+            # El de siempre se crea ultimo a proposito: asi es el que queda
+            # como la propuesta en curso si algo se corta en el medio.
             marca = self.nueva_marca_de_propuesta(
-                {"accion": "mandar_archivos", "clave": clave,
-                 "alcance": alcance or "", "desde": desde or "",
-                 "hasta": hasta or "", "nombre": nombre or "",
-                 "tipo": tipo or "todo"})
+                dict(base, accion="mandar_archivos"), junto_a=suelto)
             self.guardar()
             N.enviar(self.texto_confirmar_archivos(clave, elegidos, rango),
                      botones=N.teclado([
-                         [("\U0001F4E5 Mandalos", "prop:si:" + marca),
-                          ("\u274C No", "prop:no:" + marca)]]))
+                         [("\U0001F4E5 Mandalos", "prop:si:" + marca)],
+                         [("\U0001F4C4 De a uno", "prop:si:" + suelto),
+                          ("\U0001F4E6 En un paquete", "prop:si:" + paquete)],
+                         [("\u274C No", "prop:no:" + marca)]]))
             return
 
         self.mandar_archivos(clave, elegidos, rango)
@@ -1991,16 +2037,71 @@ class Vigilante(object):
             CFG, "MODO_ENVIO_MATERIAL", "auto")
         return modo if modo in ("auto", "suelto", "paquete") else "auto"
 
-    def van_juntos(self, cuantos):
-        """Pocos archivos se abren mejor de a uno; muchos tapan el chat."""
+    def van_juntos(self, cuantos, como=""):
+        """Pocos archivos se abren mejor de a uno; muchos tapan el chat.
+        'como' es lo que elegiste para ESTE pedido: manda sobre la
+        preferencia de siempre y despues se olvida."""
         if cuantos < 2:
             return False
-        modo = self.como_mando_el_material()
+        modo = (como if como in ("suelto", "paquete")
+                else self.como_mando_el_material())
         if modo == "suelto":
             return False
         if modo == "paquete":
             return True
         return cuantos > max(1, getattr(CFG, "SUELTOS_HASTA", 4))
+
+    def _es_paquete(self, como, crudo):
+        """Esto que baje, .es un paquete ya armado por la plataforma?
+        Los paquetes empiezan siempre con las mismas dos letras, asi que no
+        hace falta creerle al nombre del archivo."""
+        if str(como or "").lower().endswith(".zip"):
+            return True
+        return bool(crudo) and crudo[:2] == b"PK"
+
+    def desarmar_paquetes(self, listos):
+        """La plataforma tiene un boton propio de 'descargar todo' que entrega
+        UN solo archivo comprimido.  Mandartelo tal cual era el peor de los
+        mundos: pedias dos apuntes, te llegaba una cosa que hay que abrir en
+        el computador, y encima parecia que el bot ignoraba tu preferencia de
+        recibirlos de a uno.  Aca lo abro yo y te dejo lo de adentro."""
+        if not getattr(CFG, "DESARMAR_PAQUETES", True):
+            return listos
+        import io
+        import zipfile
+        tope = max(1, getattr(CFG, "ARCHIVOS_DE_UN_PAQUETE", 25))
+        salida, cambio = [], False
+        for como, crudo, a in listos:
+            if not self._es_paquete(como, crudo):
+                salida.append((como, crudo, a))
+                continue
+            try:
+                z = zipfile.ZipFile(io.BytesIO(crudo))
+                adentro = [n for n in z.namelist()
+                           if not n.endswith("/") and not n.startswith("__MACOSX")]
+            except Exception as e:
+                # Si no se deja abrir, no se pierde nada: va como vino.
+                log("[!] no pude abrir el paquete: %s" % type(e).__name__)
+                salida.append((como, crudo, a))
+                continue
+            # Vacio o gigante: mejor dejarlo cerrado que inundar el chat.
+            if not adentro or len(adentro) > tope:
+                salida.append((como, crudo, a))
+                continue
+            for nombre in adentro:
+                try:
+                    datos = z.read(nombre)
+                except Exception:
+                    continue
+                if not datos:
+                    continue
+                corto = (nombre.replace("\\", "/").split("/")[-1] or "archivo")[:80]
+                ficha = dict(a)
+                ficha["titulo"] = corto
+                ficha["de_un_paquete"] = True
+                salida.append((corto, datos, ficha))
+                cambio = True
+        return salida if cambio else listos
 
     def armar_paquete(self, titulo, listos):
         """Un solo archivo con todo adentro, sin nombres repetidos."""
@@ -2031,6 +2132,9 @@ class Vigilante(object):
     def mandar_archivos(self, clave, elegidos, rango=""):
         """Los baja y los manda por tandas.  Nunca manda el mismo dos veces y
         nunca deja una falla callada."""
+        # Lo que elegiste en el boton vale solo para este pedido, por eso se
+        # saca de la configuracion apenas se usa.
+        una_vez = self.cfg().pop("material_una_vez", "")
         g = self.estado.get("grupos", {}).get(clave, {})
         titulo = g.get("nombre", "ese ramo")
         s = self.sesiones.get(g.get("fuente"))
@@ -2072,7 +2176,15 @@ class Vigilante(object):
         # Muchos van en un solo paquete, porque veinte mensajes seguidos tapan
         # el chat y despues no encontras nada.  Si el paquete no se pudo armar
         # o pesa demasiado, no se pierde nada: salen sueltos igual.
-        if self.van_juntos(len(listos)):
+        antes = len(listos)
+        listos = self.desarmar_paquetes(listos)
+        abiertos = len(listos) - antes
+        if abiertos > 0:
+            # Ahora hay mas archivos que los que pediste: son los que venian
+            # adentro.  El resumen final tiene que hablar de estos.
+            total = len(listos)
+
+        if self.van_juntos(len(listos), una_vez):
             avisar("armando el paquete con %d archivos" % len(listos))
             paquete, como = self.armar_paquete(titulo, listos)
             if paquete and len(paquete) <= tope and N.mandar_documento(
@@ -2105,6 +2217,9 @@ class Vigilante(object):
         else:
             lineas.append("No pude bajar ninguno de los %d archivos de <b>%s</b>."
                           % (total, N.escapar(titulo)))
+        if abiertos > 0 and not en_paquete:
+            lineas.append("La plataforma me los dio todos juntos en un solo "
+                          "paquete y te lo abr\u00ed: por eso los ves de a uno.")
         if repetidos:
             lineas.append("%d era%s el mismo archivo repetido, no te lo mand\u00e9 dos veces."
                           % (repetidos, "" if repetidos == 1 else "n"))
@@ -2323,6 +2438,88 @@ class Vigilante(object):
         return ("memoria_%s.json" % ahora().strftime("%Y%m%d"),
                 json.dumps(limpio_estado, indent=1, ensure_ascii=False))
 
+    def probar_ia_ahora(self):
+        """Prueba la ayuda de IA de verdad y te cuenta que paso, en castellano.
+
+        Sin esto, cuando la IA no anda no hay forma de saber si el problema es
+        que no llegaron las claves, que se acabo el cupo o que el servicio no
+        contesta.  Tambien deja claro que el bot funciona igual sin IA.
+        """
+        volver = N.teclado([[("\u2B05\uFE0F Volver", "p:mas")]])
+        try:
+            fichas = IA.claves()
+        except Exception:
+            fichas = []
+        lineas = ["\U0001F9E0 <b>Prueba de la ayuda de IA</b>", ""]
+        if not fichas:
+            lineas.append("No me lleg\u00f3 <b>ninguna</b> clave, as\u00ed que no puedo "
+                          "resumir ni entender lo que me escrib\u00eds.")
+            lineas.append("")
+            lineas.append("Las claves se cargan en las casillas secretas de tu "
+                          "repositorio. La primera se llama IA_KEY y las de "
+                          "repuesto IA_KEY_2, IA_KEY_3, IA_KEY_4 y IA_KEY_5. "
+                          "El nombre tiene que estar escrito igual.")
+            lineas.append("")
+            lineas.append("Lo importante sigue andando igual: los avisos, el "
+                          "material y los plazos no dependen de esto.")
+            N.enviar("\n".join(lineas), botones=volver)
+            return
+        nombres = ", ".join(str(c.get("nombre", "?")) for c in fichas[:6])
+        lineas.append("Claves que me llegaron: <b>%d</b>" % len(fichas))
+        if nombres:
+            lineas.append("<i>%s</i>" % N.escapar(nombres))
+        if len(fichas) == 1:
+            lineas.append("Si cargaste m\u00e1s de una y ac\u00e1 dice 1, es que el "
+                          "nombre de la casilla no coincide: la segunda tiene "
+                          "que llamarse IA_KEY_2, exacto.")
+        lineas.append("")
+        avisar, cerrar = self.animar("Probando la ayuda de IA")
+        avisar("le hago una pregunta de prueba")
+        respuesta, falla = "", ""
+        try:
+            respuesta = (IA._pedir(self.estado,
+                                   "Contest\u00e1 solo con la palabra ok.") or "").strip()
+        except Exception as e:
+            # El texto de esta falla ya viene explicado para vos, sin jerga.
+            falla = str(e) if isinstance(e, RuntimeError) else ""
+        if respuesta:
+            lineas.append("\u2705 Le pregunt\u00e9 de verdad y me contest\u00f3.")
+            lineas.append("La ayuda de IA est\u00e1 <b>funcionando</b>.")
+        else:
+            lineas.append("\u26A0\uFE0F Le pregunt\u00e9 de verdad y <b>no</b> me contest\u00f3.")
+            lineas.append(falla[:300] if falla
+                          else "No pude conectarme con el servicio de IA.")
+            try:
+                cuando = IA.cuando_vuelve(self.estado) or ""
+            except Exception:
+                cuando = ""
+            if cuando:
+                lineas.append(cuando)
+            lineas.append("")
+            lineas.append("No perd\u00e9s nada importante: los avisos, el material "
+                          "y los plazos no dependen de esto.")
+        cerrar("\n".join(lineas), volver)
+
+    def _solo_lo_ultimo(self, elegidos, modo, nombre=""):
+        """Se queda con el ultimo archivo, o con todos los del ultimo dia que
+        tuvo material.  Devuelve tambien las fechas exactas: asi, cuando
+        confirmas, el bot vuelve a encontrar lo mismo y no algo parecido."""
+        con_fecha = [a for a in elegidos if str(a.get("cuando") or "")[:10]]
+        ordenados = sorted(con_fecha or list(elegidos),
+                           key=lambda a: str(a.get("cuando") or ""), reverse=True)
+        if not ordenados:
+            return elegidos, "", "", nombre, ""
+        primero = ordenados[0]
+        dia = str(primero.get("cuando") or "")[:10]
+        bonito = ("del %s/%s" % (dia[8:10], dia[5:7])) if len(dia) == 10 else ""
+        if modo == "dia" and dia:
+            del_dia = [a for a in ordenados
+                       if str(a.get("cuando") or "")[:10] == dia]
+            return del_dia, dia, dia, nombre, bonito or "del \u00faltimo d\u00eda"
+        titulo_a = str(primero.get("titulo", "") or "")[:80]
+        return ([primero], dia, dia, titulo_a or nombre,
+                (bonito + ", el \u00faltimo") if bonito else "el \u00faltimo")
+
     def accion(self, cual):
         if cual == "revisar":
             self.estado["_revisar_ya"] = True
@@ -2341,6 +2538,8 @@ class Vigilante(object):
             if not texto:
                 N.enviar(salud.linea_de_estado(self.estado)
                          + "\nTodo en orden, no hay nada que hacer.")
+        elif cual == "probar_ia":
+            self.probar_ia_ahora()
         elif cual == "cerrar_compartir":
             cuantos = compartir.cerrar_todo(self.estado)
             N.enviar("\U0001F512 Listo, cerr\u00e9 %d permiso(s). Nadie ve nada "
