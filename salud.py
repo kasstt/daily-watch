@@ -221,6 +221,46 @@ def tocar(nombre_repo=None, rama=None, espera=25):
     return False, "GitHub contest\u00f3 %s" % r.status_code
 
 
+# ------------------------------------------------------- pedir un turno nuevo
+ARCHIVO_DEL_RELOJ = "watch.yml"
+
+
+def relanzar(nombre_repo=None, rama=None, archivo=None, espera=25):
+    """Le pide a GitHub que arranque un turno nuevo AHORA.
+
+    Antes, apagarse dependia de que el reloj sonara solo: entre que sonaba y
+    que arrancaba podian pasar veinte minutos o mas, y en el chat eso se ve
+    igual que un bot muerto.  Pedir el turno a mano es la unica forma de
+    prometer una vuelta y cumplirla.
+
+    Devuelve (True, "") o (False, motivo escrito para una persona).
+    """
+    r_nombre = nombre_repo or repo()
+    if not r_nombre:
+        return False, "no s\u00e9 c\u00f3mo se llama el repositorio"
+    if not os.environ.get("GH_TOKEN", "").strip():
+        return False, "no tengo la llave de GitHub"
+    rama = rama or os.environ.get("GH_RAMA", "").strip() or "main"
+    archivo = archivo or os.environ.get("GH_RELOJ", "").strip() or ARCHIVO_DEL_RELOJ
+    url = "%s/repos/%s/actions/workflows/%s/dispatches" % (API, r_nombre, archivo)
+    try:
+        r = requests.post(url, headers=_cabeceras(),
+                          data=json.dumps({"ref": rama}), timeout=espera)
+    except Exception as e:
+        return False, "no me pude conectar (%s)" % type(e).__name__
+    if r.status_code in (200, 201, 204):
+        return True, ""
+    if r.status_code in (401, 403):
+        return False, ("la llave de GitHub no alcanza para pedir un turno "
+                       "nuevo")
+    if r.status_code == 404:
+        return False, ("no encuentro el reloj del repositorio (%s)"
+                       % archivo)
+    if r.status_code == 422:
+        return False, ("el reloj del repositorio no acepta arranques a mano")
+    return False, "GitHub contest\u00f3 %s" % r.status_code
+
+
 # ------------------------------------------------------------- la revision
 def revisar(estado, hoy, aviso=50, apaga=60, arreglar_solo=True,
             consultar_fn=None, tocar_fn=None):
