@@ -630,8 +630,13 @@ def pantalla(estado, donde, acc):
         if donde == "p:sem":
             return _simple("\U0001F4C5 <b>Los \u00faltimos 7 d\u00edas</b>", acc["texto_semana"]())
         if donde == "p:diag":
-            return _simple("\U0001FA7A <b>Diagn\u00f3stico</b>", acc["texto_diagnostico"](),
-                           "p:ajustes")
+            # Reiniciar vive aca y no en "Mas cosas" por dos motivos: a esta
+            # pantalla se entra cuando algo anda raro, que es justo cuando uno
+            # quiere reiniciar, y asi el unico boton que apaga queda lejos de
+            # los de todos los dias, donde se apretaria sin querer.
+            return ("\U0001FA7A <b>Diagn\u00f3stico</b>\n\n" + acc["texto_diagnostico"](),
+                    N.teclado([[("\U0001F504 Reiniciar el bot", "a:reiniciar")],
+                               [("\u2B05\uFE0F Volver", "p:ajustes")]]))
         if donde == "p:ayuda":
             return _simple("\u2753 <b>Ayuda</b>", acc["texto_ayuda"](), "p:ajustes")
         if donde == "p:perfiles":
