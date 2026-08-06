@@ -162,12 +162,12 @@ def interpretar(estado, texto, contexto):
     """Traduce un pedido hablado a un plan. Devuelve dict o None.
 
     Nunca ejecuta nada y nunca lanza errores hacia afuera."""
-    if not disponible(estado) or not (texto or "").strip():
+    if not se_puede_intentar(estado) or not (texto or "").strip():
         return None
     pedido = "%s\n\nCONTEXTO\n%s\n\nPEDIDO\n%s" % (
         ORDEN_ACCION, contexto[:2000], texto[:400])
     try:
-        salida = _pedir(estado, pedido, [])
+        salida = _pedir(estado, pedido, [], forzar=True)
     except Exception as e:
         estado["fallas_ia"] = estado.get("fallas_ia", 0) + 1
         estado["ultimo_error_ia"] = str(e)[:200]
@@ -178,13 +178,13 @@ def interpretar(estado, texto, contexto):
 
 def preguntar(estado, pregunta, libreta):
     """Charla sobre lo que el bot ya sabe. Devuelve texto o None."""
-    if not disponible(estado) or not (pregunta or "").strip():
+    if not se_puede_intentar(estado) or not (pregunta or "").strip():
         return None
     pedido = "%s\n\n%s\nLIBRETA\n%s\n\nPREGUNTA\n%s" % (
         ORDEN_CHARLA % CFG.IA.get("largo_charla", 900),
         MANUAL, libreta[:12000], pregunta[:600])
     try:
-        salida = _pedir(estado, pedido, [])
+        salida = _pedir(estado, pedido, [], forzar=True)
     except Exception as e:
         estado["fallas_ia"] = estado.get("fallas_ia", 0) + 1
         estado["ultimo_error_ia"] = str(e)[:200]
@@ -431,7 +431,7 @@ def cuando_vuelve(estado=None):
     return "no puedo resumir en este momento"
 
 
-def _pedir(estado, texto, pdfs=()):
+def _pedir(estado, texto, pdfs=(), forzar=False):
     """Prueba las claves en orden y devuelve la primera respuesta buena.
 
     El relevo es callado: no te aviso cada vez que cambio de clave, solo
@@ -443,6 +443,11 @@ def _pedir(estado, texto, pdfs=()):
     motivos = []
     for i, c in enumerate(lista, 1):
         quieta = _descansando(estado, c)
+        # Cuando el pedido lo hace el dueno en persona, el descanso no manda:
+        # se intenta igual.  Un "volve en 40 minutos" calculado hace rato no
+        # puede ser la razon por la que no le contesto a quien esta escribiendo.
+        if quieta and forzar and "mala" not in quieta:
+            quieta = ""
         if quieta:
             # Al dueno no le sirve saber CUAL de las claves fue, solo por que.
             motivos.append(quieta.split(",")[0])
@@ -495,6 +500,42 @@ def disponible(estado=None):
         if all(_descansando(estado, c) for c in lista):
             return False
     return True
+
+
+def se_puede_intentar(estado=None):
+    """Si vale la pena intentarlo de verdad cuando el dueno pregunta el.
+
+    Distinto de disponible(): aca no cuentan los descansos.  Un descanso
+    viejo, o uno que quedo mal puesto, no puede dejar sin respuesta a la
+    persona que esta escribiendo en este momento.
+    """
+    if CFG.IA["proveedor"] == "ninguno":
+        return False
+    if not claves():
+        return False
+    if estado is not None and not estado.get("config", {}).get("ia", True):
+        return False
+    return True
+
+
+def en_palabras(estado=None):
+    """Como esta la IA, en una frase y calculado en un solo lugar.
+
+    Antes cada pantalla lo resolvia por su cuenta: la prueba decia
+    "funcionando" y el chat contestaba "no la tengo disponible" en el mismo
+    minuto.  Las dos tenian razon a medias y el dueno no entendia nada.
+    """
+    if CFG.IA["proveedor"] == "ninguno":
+        return "apagada en la configuracion"
+    if not claves():
+        return "sin claves cargadas"
+    if estado is not None and not estado.get("config", {}).get("ia", True):
+        return "apagada por vos"
+    if estado is not None:
+        lista = claves()
+        if lista and all(_descansando(estado, c) for c in lista):
+            return "descansando, %s" % cuando_vuelve(estado)
+    return "encendida"
 
 
 def ramo_excluido(nombre):
