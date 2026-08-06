@@ -30,6 +30,7 @@ import re
 import time
 import zipfile
 import collections
+import unicodedata
 
 SALIDA = "sonda.txt"
 LINEAS = []
@@ -42,6 +43,9 @@ ADENTRO_POR_RAMO = 60          # cuantas paginas internas se abren por ramo
 PAQUETES_POR_RAMO = 12
 AVISOS_POR_RAMO = 8
 ESQUELETOS_POR_RAMO = 4        # cuantos volcados de estructura por ramo
+OTROS_POR_RAMO = 60            # "el resto" tambien se abre: ahi estaba el video
+SEGUNDO_NIVEL_POR_RAMO = 30    # lo que cuelga de una seccion
+REUNIONES_POR_RAMO = 4         # paginas de videochat por ramo
 LARGO_ESQUELETO = 90           # lineas de estructura por pagina
 TOPE_INFORME = 600000          # caracteres; si se pasa, se corta avisando
 
@@ -57,13 +61,71 @@ PEDAZOS_COMUNES = ("http", "https", "www", "com", "org", "net", "edu", "gov",
                    "file", "download", "view", "page", "site", "web")
 
 
+# Letras que cambian de forma segun como este escrito el texto.  Con esto
+# "Gutierrez" tambien tapa a "GUTI\u00c9RREZ".
+VARIANTES = {"a": "[a\u00e1\u00e0\u00e2\u00e4]", "e": "[e\u00e9\u00e8\u00ea\u00eb]",
+             "i": "[i\u00ed\u00ec\u00ee\u00ef]", "o": "[o\u00f3\u00f2\u00f4\u00f6]",
+             "u": "[u\u00fa\u00f9\u00fb\u00fc]", "n": "[n\u00f1]", "c": "[c\u00e7]"}
+_PATRONES = {}
+
+
+def sin_tildes(t):
+    """Las mismas letras, sin tildes."""
+    return "".join(c for c in unicodedata.normalize("NFD", str(t))
+                   if unicodedata.category(c) != "Mn")
+
+
+def patron_flexible(valor):
+    """Encuentra la palabra aunque este en mayusculas o con tildes.
+
+    Por esto se escapo el nombre del dueno: en el cartel de la plataforma
+    salia en mayusculas, y buscarlo tal cual no lo encontraba.
+    """
+    if valor not in _PATRONES:
+        armado = "".join(VARIANTES.get(c.lower(), re.escape(c))
+                         for c in sin_tildes(valor))
+        try:
+            _PATRONES[valor] = re.compile(armado, re.I)
+        except re.error:
+            _PATRONES[valor] = re.compile(re.escape(valor), re.I)
+    return _PATRONES[valor]
+
+
+# Como te saluda cada plataforma.  De ahi se aprende tu nombre sin tenerlo
+# escrito en ningun lado del proyecto.
+RE_TE_LLAMAS = [
+    re.compile(r"(?:ha\s+iniciado\s+sesi\u00f3n\s+como|ha\s+iniciado\s+sesion\s+como"
+               r"|se\s+ha\s+identificado\s+como|est\u00e1s?\s+conectado\s+como"
+               r"|estas?\s+conectado\s+como|logged\s+in\s+as)\s*:?\s*"
+               r"([^<>\n\r,;\.]{4,60})", re.I),
+    re.compile(r"<span[^>]*class=[\"\'][^\"\']*usertext[^\"\']*[\"\'][^>]*>"
+               r"([^<]{4,60})</span>", re.I),
+    re.compile(r"<div[^>]*class=[\"\'][^\"\']*(?:usuario|username|user-name)"
+               r"[^\"\']*[\"\'][^>]*>\s*([^<]{4,60})\s*</div>", re.I),
+]
+
+
+def aprender_nombre(html):
+    """Aprende como te llama la plataforma y lo tapa desde ese momento.
+
+    El proyecto no puede traer tu nombre escrito, asi que la unica forma de
+    taparlo es reconocerlo cuando la propia pagina lo dice.
+    """
+    for patron in RE_TE_LLAMAS:
+        for hallado in patron.findall(html or "")[:5]:
+            nombre = " ".join(str(hallado).split())
+            if 4 <= len(nombre) <= 60 and not nombre.lower().startswith("http"):
+                guardar_secreto(nombre, "TU_NOMBRE")
+                tapar_los_pedazos(nombre)
+
+
 def tapar_los_pedazos(valor):
     """Guarda tambien los pedazos sueltos de una direccion o un usuario.
 
     Sirve para cuando el nombre de la universidad aparece escrito en el texto
     de la pagina y no como direccion: ahi el reemplazo entero no alcanza.
     """
-    for pedazo in re.split(r"[^A-Za-z0-9]+", str(valor or "")):
+    for pedazo in re.split(r"[^A-Za-z0-9]+", sin_tildes(str(valor or ""))):
         chico = pedazo.lower()
         if (len(chico) >= 3 and chico not in PEDAZOS_COMUNES
                 and not chico.isdigit() and chico not in PALABRAS_TAPADAS):
@@ -107,9 +169,10 @@ def tapar(texto):
     t = str(texto)
     for valor, etiqueta in TAPAR:
         if valor:
-            t = t.replace(valor, etiqueta)
+            # Sin importar mayusculas ni tildes.
+            t = patron_flexible(valor).sub(etiqueta, t)
     for palabra in PALABRAS_TAPADAS:
-        t = re.sub(re.escape(palabra), "OCULTO", t, flags=re.I)
+        t = patron_flexible(palabra).sub("OCULTO", t)
     # Un correo suelto que se haya colado en el HTML.
     t = re.sub(r"[\w.+-]+@[\w.-]+\.\w+", "CORREO_OCULTO", t)
     # La llave con la que la pagina reconoce tu sesion: no sirve para arreglar
@@ -137,7 +200,9 @@ def subtitulo(t):
 
 
 def volcar():
-    texto = "\n".join(LINEAS)
+    # Se tapa TODO de nuevo al final: si tu nombre recien aparecio en la
+    # pagina 30, las 29 anteriores ya estaban escritas sin taparlo.
+    texto = tapar("\n".join(LINEAS))
     if len(texto) > TOPE_INFORME:
         texto = (texto[:TOPE_INFORME]
                  + "\n\n[...] el informe se corto aca para que se pueda "
@@ -172,6 +237,9 @@ def bajar(s, url, limite=900000):
         ficha["peso"] = len(crudo)
         if "text" in ficha["tipo"] or "html" in ficha["tipo"] or "json" in ficha["tipo"]:
             ficha["html"] = crudo[:limite].decode("utf-8", "ignore")
+            # Antes de escribir nada: si la pagina dice tu nombre, se aprende
+            # aca y queda tapado en todo lo que venga.
+            aprender_nombre(ficha["html"])
         else:
             ficha["crudo"] = crudo
     except Exception as e:
@@ -256,6 +324,115 @@ def mirar_paquete(ficha):
 
 
 # --------------------------------------------------------------- un ramo
+# Enlaces que NO se abren ni por casualidad: cierran la sesion o cambian algo
+# en la plataforma de verdad.  Uno solo de estos arruina la corrida entera.
+RE_PELIGROSO = re.compile(
+    r"(^|[/_?&=.-])(logout|salir|signout|cerrar|desconectar|crear|nuevo|new"
+    r"|editar|edit|borrar|eliminar|delete|remove|unenrol|desmatricul"
+    r"|enviar|submit|responder|contestar|entregar|calificar|evaluar"
+    r"|guardar|save|confirmar|inscribir|matricular|agregar)([/_?&=.-]|$)",
+    re.I)
+
+
+def peligroso(url):
+    """True si abrir ese enlace podria cambiar algo o dejarte afuera."""
+    return bool(RE_PELIGROSO.search(str(url or "")))
+
+
+def mirar_de_paso(W, s, base, u, etiqueta, vistos, sangria="  "):
+    """Abre una pagina cualquiera y cuenta todo lo que se ve desde ahi.
+
+    Devuelve (enlaces nuevos, bajables) para poder seguir bajando.
+    """
+    d = bajar(s, u)
+    escribir("")
+    escribir("%s> %s" % (sangria, u.replace(base, etiqueta)))
+    escribir("%s  respuesta: %s | %s | %s | %ss"
+             % (sangria, d["codigo"], d["tipo"] or "?", peso(d["peso"]),
+                d["segundos"]))
+    if d["falla"]:
+        escribir("%s  no se pudo abrir: %s" % (sangria, d["falla"]))
+        return [], []
+    if d["final"] != u:
+        escribir("%s  me mando a: %s"
+                 % (sangria, d["final"].replace(base, etiqueta)))
+    hd = d["html"]
+    if not hd:
+        escribir("%s  esto no es una pagina: es un archivo" % sangria)
+        return [], []
+    _et, cl, _sc, _fo, se = inventario(hd)
+    nuevos = []
+    for x in RE_ENLACE.findall(hd):
+        entero = x if x.startswith("http") else (
+            base + x if x.startswith("/") else "")
+        if entero and entero not in vistos:
+            vistos.add(entero)
+            nuevos.append(entero)
+    bajables_aca = [x for x in nuevos if W.es_bajable(x, "")]
+    escribir("%s  enlaces nuevos: %d | bajables: %d"
+             % (sangria, len(nuevos), len(bajables_aca)))
+    escribir("%s  clases: %s"
+             % (sangria, ", ".join("%s=%d" % (k, v) for k, v in cl.most_common(6))))
+    if se:
+        escribir("%s  dibujado por programa: %s" % (sangria, ", ".join(se)))
+    for x in bajables_aca[:20]:
+        escribir("%s    * %s" % (sangria, x.replace(base, etiqueta)))
+    for x in nuevos[:20]:
+        if x not in bajables_aca:
+            escribir("%s    . %s" % (sangria, x.replace(base, etiqueta)))
+    return nuevos, bajables_aca
+
+
+def mirar_reuniones_de(W, s, base, enlaces, etiqueta):
+    """Las reuniones por video, leidas igual que las lee el bot.
+
+    Aca se ve de una si el bot las va a avisar o no.  La clave de la reunion
+    NO se escribe en el informe: solo si viene o no viene.
+    """
+    escribir("")
+    escribir("REUNIONES POR VIDEO")
+    if not enlaces:
+        escribir("  este ramo no tiene pagina de videochat")
+        return
+    for u in enlaces[:REUNIONES_POR_RAMO]:
+        escribir("  > %s" % u.replace(base, etiqueta))
+        d = bajar(s, u)
+        escribir("    respuesta: %s | %s | %s"
+                 % (d["codigo"], d["tipo"] or "?", peso(d["peso"])))
+        id_ramo = u.rstrip("/").split("/")[-1]
+        try:
+            reuniones = W.reuniones_b64(s, base, id_ramo)
+        except Exception as e:
+            reuniones = None
+            escribir("    reviento al leerlas: %s" % type(e).__name__)
+        if reuniones is None:
+            escribir("    EL BOT NO PUDO LEER ESTA PAGINA (esto hay que arreglarlo)")
+        elif not reuniones:
+            escribir("    el bot la leyo bien y no hay ninguna reunion anotada")
+        else:
+            escribir("    el bot ve %d reunion(es):" % len(reuniones))
+            for r in reuniones:
+                # La clave de la reunion es una contrasena: se aprende aca
+                # para que no aparezca ni en el volcado de la pagina.  El
+                # nombre del anfitrion es de otra persona, igual de tapado.
+                if r.get("llave"):
+                    guardar_secreto(str(r["llave"]), "CLAVE_DE_LA_REUNION")
+                if r.get("anfitrion"):
+                    guardar_secreto(str(r["anfitrion"]), "NOMBRE_DE_OTRA_PERSONA")
+                cuando = r.get("cuando")
+                escribir("      - %s | %s min | %s | anfitrion: %s | clave: %s "
+                         "| enlace: %s"
+                         % (cuando.strftime("%d-%m-%Y %H:%M") if cuando else "?",
+                            r.get("minutos", "?"), (r.get("tema") or "?")[:60],
+                            "si" if r.get("anfitrion") else "no",
+                            "si" if r.get("llave") else "no",
+                            "si" if r.get("enlace") else "no"))
+        if d["html"]:
+            escribir("    --- como esta armada esta pagina ---")
+            for fila in esqueleto(d["html"]):
+                escribir("    | " + fila)
+
+
 def informe_de_ramo(W, CFG, s, base, ficha_ramo, etiqueta):
     nombre = ficha_ramo.get("nombre", "?")
     raiz = ficha_ramo.get("url", "")
@@ -332,6 +509,7 @@ def informe_de_ramo(W, CFG, s, base, ficha_ramo, etiqueta):
     escribir("ADENTRO DE CADA SECCION")
     esqueletos = 0
     encontrados_adentro = 0
+    segundo_nivel = []
     for u in internos[:ADENTRO_POR_RAMO]:
         dentro = bajar(s, u)
         escribir("")
@@ -372,6 +550,11 @@ def informe_de_ramo(W, CFG, s, base, ficha_ramo, etiqueta):
         for x in nuevos:
             if "download_zip" in x.lower() and x not in paquetes:
                 paquetes.append(x)
+        # Lo que cuelga de esta seccion se mira despues: antes se perdia.
+        for x in nuevos:
+            if (base in x and x not in segundo_nivel and not peligroso(x)
+                    and not W.es_bajable(x, "")):
+                segundo_nivel.append(x)
         # Si la seccion parece vacia, se vuelca su estructura: ahi se ve si el
         # material esta escondido detras de un programa del navegador.
         if not bajables_dentro and esqueletos < ESQUELETOS_POR_RAMO:
@@ -379,6 +562,45 @@ def informe_de_ramo(W, CFG, s, base, ficha_ramo, etiqueta):
             escribir("    --- como esta armada esta pagina ---")
             for fila in esqueleto(hd):
                 escribir("    | " + fila)
+
+    # ---- "el resto" tambien se abre.  Aca estaba escondida la pagina de
+    # videochat: se listaba como "otro" y no la abria nadie.
+    escribir("")
+    escribir("EL RESTO DE LOS ENLACES, ABIERTOS UNO POR UNO")
+    ni_de_casualidad = 0
+    for u in otros[:OTROS_POR_RAMO]:
+        if base not in u:
+            continue
+        if peligroso(u):
+            ni_de_casualidad += 1
+            escribir("  (no lo abro, podria cambiar algo): %s"
+                     % u.replace(base, etiqueta))
+            continue
+        nuevos_aca, bajables_aca = mirar_de_paso(W, s, base, u, etiqueta, vistos)
+        encontrados_adentro += len(bajables_aca)
+        for x in nuevos_aca:
+            if "download_zip" in x.lower() and x not in paquetes:
+                paquetes.append(x)
+            elif (base in x and x not in segundo_nivel and not peligroso(x)
+                    and not W.es_bajable(x, "")):
+                segundo_nivel.append(x)
+    if ni_de_casualidad:
+        escribir("")
+        escribir("  (%d enlaces no se abrieron a proposito: cierran sesion o "
+                 "cambian cosas)" % ni_de_casualidad)
+
+    # ---- las reuniones por video, con los ojos del bot
+    mirar_reuniones_de(W, s, base,
+                       [u for u in crudos if "/meeting/" in u.lower()
+                        and not peligroso(u)], etiqueta)
+
+    # ---- un nivel mas abajo: lo que cuelga de las secciones
+    escribir("")
+    escribir("UN NIVEL MAS ADENTRO (%d paginas por mirar)" % len(segundo_nivel))
+    for u in segundo_nivel[:SEGUNDO_NIVEL_POR_RAMO]:
+        _n, bajables_hondo = mirar_de_paso(W, s, base, u, etiqueta, vistos,
+                                           sangria="    ")
+        encontrados_adentro += len(bajables_hondo)
 
     # ---- los paquetes que arma la propia plataforma
     escribir("")
