@@ -215,7 +215,12 @@ def calza_nombre(pedido, ficha):
         return True
     ficha = ficha or {}
     cola = str(ficha.get("url") or "").split("?")[0].rstrip("/").split("/")[-1]
+    # El nombre con el que BAJA el archivo tambien cuenta.  En una de las
+    # plataformas el enlace se llama "Descargar" y la direccion es un numero:
+    # sin esto, buscar "Semana" jamas encontraba el Semana1.pdf que el mismo
+    # bot habia mandado un rato antes.
     donde = (_solo_letras(ficha.get("titulo", "")) + " "
+             + _solo_letras(_sin_final(str(ficha.get("real") or ""))) + " "
              + _solo_letras(_sin_final(cola))).strip()
     if pedido in donde:
         return True
@@ -548,6 +553,12 @@ def arbol_escondido(html, base, id_ramo):
     return salida
 
 
+# Que subpaginas de cada ramo ya se abrieron alguna vez en esta corrida.
+# Sirve para no mirar siempre las mismas primeras y dejar el fondo del ramo
+# sin abrir para siempre.
+_YA_MIRADAS = {}
+
+
 def _toca_profundo(id_ramo, firma_raiz, vacio=False):
     """Entrar adentro de cada actividad en cada vuelta seria maltratar la
     plataforma.  Entro cuando la portada cambio, y cada tanto igual.
@@ -619,11 +630,20 @@ def explorar_ramo(s, base, g):
     cola += [(it["url"], 1) for it in items.values()
             if _es_del_ramo(it["url"], base, g.get("id"))
             and not es_bajable(it["url"], it["titulo"])]
+    # Un ramo con mas carpetas que el tope se miraba siempre por el mismo lado:
+    # las ultimas no se abrian NUNCA y su material no existia para el bot.
+    # Poniendo adelante las que todavia no se miraron, en dos o tres vueltas
+    # queda recorrido entero sin castigar a la plataforma.
+    ya = _YA_MIRADAS.setdefault(str(g.get("id")), set())
+    cola.sort(key=lambda par: par[0] in ya)
     while cola and len(vistas) < tope:
         url, nivel = cola.pop(0)
         if url in vistas:
             continue
         vistas.add(url)
+        ya.add(url)
+        if len(ya) > 4000:
+            ya.clear()
         try:
             dentro = s.get(url, timeout=CFG.ESPERA_RED).text
         except Exception:
@@ -639,6 +659,9 @@ def explorar_ramo(s, base, g):
             if (nivel < hondo and not es_bajable(it["url"], it["titulo"])
                     and _es_del_ramo(it["url"], base, g.get("id"))):
                 cola.append((it["url"], nivel + 1))
+    # Si el tope corto la recorrida, hay material que existe y no se miro.
+    # Callar eso es lo que hacia que un ramo enorme se viera casi vacio.
+    g["corto"] = bool(cola)
     return list(items.values()), huella("firma", *sorted(firmas))
 
 
@@ -900,17 +923,21 @@ def leer_aula(s, base):
         if _pantalla_de_entrar(html):
             continue
         alguna_abrio = True
+        # Antes esto paraba apenas UNA pagina mostraba algun ramo, y solo
+        # preguntaba la lista de verdad si no habia encontrado nada.  La
+        # portada dibuja los ramos que visitaste hace poco, no todos: por eso
+        # un ramo recien inscrito no aparecia nunca en la lista, y como no
+        # aparecia, tampoco se avisaba nada de lo que habia adentro.
+        # Ahora se juntan todos los caminos y SIEMPRE se pregunta la lista
+        # completa.  Un ramo de mas se ve; uno de menos no se ve jamas.
         for g in _ramos_en_html(base, html):
             if g["id"] not in vistos:
                 vistos.add(g["id"])
                 grupos.append(g)
-        if not grupos:
-            for g in _ramos_por_dentro(s, base, html):
-                if g["id"] not in vistos:
-                    vistos.add(g["id"])
-                    grupos.append(g)
-        if grupos:
-            break
+        for g in _ramos_por_dentro(s, base, html):
+            if g["id"] not in vistos:
+                vistos.add(g["id"])
+                grupos.append(g)
     if not alguna_abrio:
         return None, []
     for g in grupos:
@@ -2142,8 +2169,86 @@ class Vigilante(object):
             for d in dudosos:
                 if (libreta.get(d["url"]) or {}).get("es") == "archivo":
                     salida.setdefault(d["url"], d)
+        # A cada ficha se le pega el nombre con el que el archivo llego al
+        # chat, si alguna vez llego.  Ese es el unico nombre que el dueno vio
+        # escrito, o sea el que va a escribir cuando lo busque.
+        reales = self.estado.get("nombres_reales", {})
+        for u, ficha in salida.items():
+            real = reales.get(u)
+            if real:
+                ficha["real"] = real
         return sorted(salida.values(), key=lambda x: x.get("cuando") or "",
                       reverse=True)
+
+    def recordar_nombre(self, url, nombre):
+        """Anota con que nombre llego un archivo al chat.
+
+        El texto del enlace y el nombre del archivo casi nunca son lo mismo.
+        El dueno solo ve el segundo, asi que es el que hay que recordar.
+        """
+        if not url or not nombre:
+            return
+        reales = self.estado.setdefault("nombres_reales", {})
+        if reales.get(url) == nombre:
+            return
+        reales[url] = str(nombre)[:120]
+        tope = int(getattr(CFG, "NOMBRES_GUARDADOS", 3000) or 0)
+        if tope and len(reales) > tope:
+            for viejo in list(reales)[:len(reales) - tope]:
+                reales.pop(viejo, None)
+
+    def averiguar_nombres(self, clave, fichas, tope=None):
+        """Le pregunta a la plataforma como se llama cada archivo.
+
+        No baja nada: pide solo la cabecera.  Se usa cuando una busqueda por
+        nombre no encontro nada, que es justo el momento en que vale la pena
+        gastar unos segundos antes de decirle al dueno que su archivo no
+        existe.  Lo que aprende queda guardado y no se vuelve a preguntar.
+
+        Devuelve cuantos nombres nuevos aprendio.
+        """
+        if tope is None:
+            tope = getattr(CFG, "NOMBRES_A_PREGUNTAR", 25)
+        g = self.estado.get("grupos", {}).get(clave, {})
+        # Si todavia no hay sesion abierta con la plataforma, esto no puede
+        # preguntar nada, pero tampoco puede reventar: la busqueda tiene que
+        # seguir andando con los nombres que ya tenga guardados.
+        s = getattr(self, "sesiones", {}).get(g.get("fuente"))
+        if not s:
+            return 0
+        reales = self.estado.setdefault("nombres_reales", {})
+        aprendidos, preguntados = 0, 0
+        for a in fichas:
+            if preguntados >= tope:
+                break
+            u = a.get("url") or ""
+            if not u:
+                continue
+            if u in reales:
+                a["real"] = reales[u]
+                continue
+            preguntados += 1
+            r = None
+            try:
+                r = s.head(u, timeout=12, allow_redirects=True)
+                if not (r.headers.get("Content-Disposition") or ""):
+                    r = s.get(u, timeout=15, allow_redirects=True, stream=True)
+                    try:
+                        r.close()
+                    except Exception:
+                        pass
+            except Exception:
+                continue
+            try:
+                real = nombre_de_archivo(r, u, a.get("titulo", "archivo"))
+            except Exception:
+                continue
+            if not real:
+                continue
+            reales[u] = str(real)[:120]
+            a["real"] = reales[u]
+            aprendidos += 1
+        return aprendidos
 
     def cuantos_archivos(self, clave):
         """El numero que muestra el panel.  Cuenta igual que el boton, asi que
@@ -2156,19 +2261,31 @@ class Vigilante(object):
         Devuelve (elegidos, cuantos_hay_en_total, como_se_dice_el_rango)."""
         d, h = rango_de_fechas(alcance, desde, hasta)
         todos = self.archivos_del_ramo(clave, frescos=frescos)
-        elegidos = []
-        for a in todos:
-            # Se compara por palabras y sin el final del nombre: escribir
-            # "Gu\u00eda 3.pdf" tiene que encontrar "Guia N\u00b03".
-            if nombre and not calza_nombre(nombre, a):
-                continue
-            if not de_este_tipo(tipo, a.get("titulo", ""), a.get("url", "")):
-                continue
-            if d:
-                cuando = (a.get("cuando") or "")[:10]
-                if not cuando or cuando < str(d) or cuando > str(h):
+
+        def pasan(lista):
+            salen = []
+            for a in lista:
+                # Se compara por palabras y sin el final del nombre: escribir
+                # "Gu\u00eda 3.pdf" tiene que encontrar "Guia N\u00b03".
+                if nombre and not calza_nombre(nombre, a):
                     continue
-            elegidos.append(a)
+                if not de_este_tipo(tipo, a.get("titulo", ""), a.get("url", "")):
+                    continue
+                if d:
+                    cuando = (a.get("cuando") or "")[:10]
+                    if not cuando or cuando < str(d) or cuando > str(h):
+                        continue
+                salen.append(a)
+            return salen
+
+        elegidos = pasan(todos)
+        # Decirle "no lo tengo" cuando el archivo esta guardado es la falla mas
+        # cara de todas: el dueno se queda creyendo que el material no existe.
+        # Antes de rendirse, se le pregunta a la plataforma como se llama de
+        # verdad cada archivo, que es lo unico que faltaba para encontrarlo.
+        if nombre and not elegidos and todos and frescos:
+            if self.averiguar_nombres(clave, todos):
+                elegidos = pasan(todos)
         tope = getattr(CFG, "TOPE_ARCHIVOS_DE_UNA", 80)
         return elegidos[:tope], len(todos), rango_lindo(d, h)
 
@@ -2232,7 +2349,9 @@ class Vigilante(object):
             return []
         puntajes = []
         for a in self.archivos_del_ramo(clave, frescos=False):
-            titulo = limpio(a.get("titulo") or "")
+            # Se muestra el nombre real cuando se conoce: sugerir el texto del
+            # enlace ("Descargar") no le sirve de nada a nadie.
+            titulo = limpio(a.get("real") or a.get("titulo") or "")
             if not titulo:
                 continue
             palabras = set(_solo_letras(titulo).split())
@@ -2496,8 +2615,10 @@ class Vigilante(object):
                 fallados.append((a, "pesa %s y la mensajer\u00eda aguanta %d MB"
                                  % (peso_lindo(len(crudo)), CFG.PESO_ADJUNTO_MB)))
                 continue
-            listos.append((nombre_de_archivo(r, a["url"],
-                                             a.get("titulo", "archivo")), crudo, a))
+            como_llega = nombre_de_archivo(r, a["url"],
+                                           a.get("titulo", "archivo"))
+            self.recordar_nombre(a["url"], como_llega)
+            listos.append((como_llega, crudo, a))
 
         # Pocos archivos van tal cual, asi se abren de una desde el telefono.
         # Muchos van en un solo paquete, porque veinte mensajes seguidos tapan
@@ -2861,6 +2982,10 @@ class Vigilante(object):
         que tocar nada.  Se avisa ANTES de apagarse, porque un bot que se
         apaga en silencio es igual a un bot roto.
         """
+        # Queda dicho desde el principio que NO se apaga.  Solo se cambia si
+        # mas abajo se consigue el turno nuevo; asi cualquier salida temprana
+        # deja al bot despierto en vez de dejarlo en un estado a medias.
+        self.reiniciar_pedido = False
         try:
             self.guardar()
         except Exception as e:
@@ -2868,10 +2993,55 @@ class Vigilante(object):
             N.enviar("\u26A0\uFE0F No pude guardar la memoria, as\u00ed que mejor no "
                      "me apago. Prob\u00e1 de nuevo en un rato.")
             return
+        # Apagarse es facil; volver no.  Antes esto confiaba en que el reloj
+        # de GitHub levantara la corrida siguiente: entre que sonaba y que
+        # arrancaba podian pasar veinte minutos, y en el chat un bot que no
+        # contesta veinte minutos es igual a un bot muerto.  Ahora el turno
+        # nuevo se pide en el momento.
+        pudo, motivo = False, "no lo pude pedir"
+        try:
+            pudo, motivo = salud.relanzar()
+        except Exception as e:
+            pudo, motivo = False, "no me pude conectar (%s)" % type(e).__name__
+        if not pudo:
+            # Apagarse sin saber si se vuelve es la peor falla de todas: el bot
+            # queda mudo y eso no se distingue de "no hay novedades".
+            N.enviar("\u26A0\uFE0F <b>Mejor no me apago</b>\n"
+                     "Ped\u00ed el turno nuevo y no me lo dieron: %s.\n"
+                     "Si me apagara ahora no sabr\u00eda cu\u00e1ndo vuelvo, as\u00ed que "
+                     "sigo despierto. Todo lo dem\u00e1s funciona igual."
+                     % N.escapar(motivo),
+                     botones=N.teclado([[("\u2B05\uFE0F Volver", "p:mas")]]))
+            return
+        # Queda anotado en la memoria para poder saludarte al volver.
+        self.estado["reinicio_pedido_en"] = ahora().strftime("%Y-%m-%d %H:%M")
+        try:
+            self.guardar()
+        except Exception as e:
+            log("[!] anotando el reinicio:", type(e).__name__)
         self.reiniciar_pedido = True
-        N.enviar("\U0001F504 Listo, me apago y arranco de nuevo.\n"
-                 "Guard\u00e9 todo: no perd\u00e9s ning\u00fan aviso. Vuelvo solo en unos "
-                 "minutos y te aviso cuando est\u00e9 despierto.")
+        N.enviar("\U0001F504 Listo, ya ped\u00ed el turno nuevo y me apago.\n"
+                 "Guard\u00e9 todo: no perd\u00e9s ning\u00fan aviso. Vuelvo en un par de "
+                 "minutos y te aviso ac\u00e1 mismo cuando est\u00e9 despierto.")
+
+    def saludar_si_volvi(self):
+        """Cumple la promesa del boton de reinicio.
+
+        Antes avisaba que se apagaba y despues volvia callado: desde el chat
+        era imposible saber si habia vuelto.  Prometer la vuelta y no decir
+        nada al volver se ve exactamente igual que no volver nunca.
+        """
+        cuando = self.estado.pop("reinicio_pedido_en", "")
+        if not cuando:
+            return
+        N.enviar("\u2705 <b>Ya volv\u00ed</b>\n"
+                 "Me apagaste a las %s y ac\u00e1 estoy de nuevo, con toda la "
+                 "memoria intacta." % N.escapar(str(cuando)[-5:] or str(cuando)),
+                 teclado_fijo=True)
+        try:
+            self.guardar()
+        except Exception as e:
+            log("[!] guardando despues de volver:", type(e).__name__)
 
     def _solo_lo_ultimo(self, elegidos, modo, nombre=""):
         """Se queda con el ultimo archivo, o con todos los del ultimo dia que
@@ -3081,6 +3251,21 @@ class Vigilante(object):
             self._anotar_falla(clave, "el ramo qued\u00f3 vac\u00edo de golpe")
             return
         ficha["cantidad"] = len(g["items"])
+
+        # Un ramo mirado a medias que no lo dice es igualito a un ramo entero:
+        # el dueno cree que ya vio todo. Se avisa una sola vez por ramo.
+        if getattr(CFG, "AVISAR_SI_NO_ALCANZO", True) and self.estado.get("arrancado"):
+            if g.get("corto") and not ficha.get("aviso_corto"):
+                ficha["aviso_corto"] = True
+                N.enviar(
+                    "\u26A0\uFE0F <b>%s tiene m\u00e1s de lo que alcanc\u00e9 a mirar</b>\n"
+                    "Es un ramo muy grande. Revis\u00e9 las primeras %d carpetas y "
+                    "quedaron m\u00e1s afuera. Sigo con el resto en las pr\u00f3ximas "
+                    "vueltas, no hace falta que hagas nada."
+                    % (N.escapar(g["nombre"]),
+                       getattr(CFG, "PAGINAS_POR_RAMO", 60)))
+            elif not g.get("corto") and ficha.get("aviso_corto"):
+                ficha.pop("aviso_corto", None)
 
         items = self.estado.setdefault("items", {})
         frescos = []
@@ -3689,6 +3874,7 @@ class Vigilante(object):
             if not crudo or len(crudo) > tope:
                 continue
             nombre = nombre_de_archivo(r, it["url"], it.get("titulo", "archivo"))
+            self.recordar_nombre(it.get("url", ""), nombre)
             if N.mandar_documento(nombre, crudo, silencioso=True, responde_a=responde_a):
                 mandados += 1
         return mandados
@@ -4188,6 +4374,7 @@ class Vigilante(object):
         self.reiniciar_pedido = False
         N.publicar_menu(comandos.MENU)
         self.avisar_version()
+        self.saludar_si_volvi()
         if not self.estado.get("arrancado"):
             self.revisar_todo()
             self.procesar_agenda()
