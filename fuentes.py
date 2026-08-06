@@ -361,3 +361,8 @@ MAXIMO_AUTORIZADOS = 8
 # Cuantas veces te aviso del MISMO desconocido antes de callarme (para que
 # nadie te pueda llenar el chat escribiendole al bot).
 AVISOS_POR_DESCONOCIDO = 1
+
+# Cuantos minutos antes de una clase por videoconferencia queres
+# el recordatorio.  Es el aviso que llega cuando todavia se puede
+# hacer algo: el de la vispera se pierde entre los mensajes.
+MINUTOS_ANTES_DE_LA_CLASE = 10
