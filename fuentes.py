@@ -124,8 +124,18 @@ MINUTOS_DORMIDO = 4          # cuanto vive una corrida fuera de la ventana
 # La portada del ramo casi nunca muestra el archivo: muestra la actividad,
 # y el archivo esta adentro.  Por eso entra un nivel mas.
 PROFUNDIDAD = 1                  # cuantos niveles entra dentro del ramo
-PAGINAS_POR_RAMO = 14            # tope de paginas por ramo, para no abusar
+# Este tope estaba en 14 y era la causa de que un ramo grande apareciera casi
+# vacio: la fisica tiene mas de cuarenta carpetas y el bot miraba catorce y se
+# callaba.  Perder material sin decirlo es peor que tardar un poco mas.
+PAGINAS_POR_RAMO = 60            # tope de paginas por ramo, para no abusar
 MINUTOS_EXPLORACION_PROFUNDA = 20  # cada cuanto vuelve a entrar adentro
+AVISAR_SI_NO_ALCANZO = True      # si el tope corta un ramo, te lo dice
+
+# Cuando una busqueda por nombre no encuentra nada, el bot le pregunta a la
+# plataforma como se llaman de verdad los archivos antes de contestar que no
+# los tiene.  Esto es cuantos pregunta de una y cuantos nombres recuerda.
+NOMBRES_A_PREGUNTAR = 25
+NOMBRES_GUARDADOS = 3000
 TOPE_PRIMERA_TANDA = 10          # si la primera mirada honda trae mas, no grita
 
 # El ultimo seguro: si la pagina del ramo cambio y no supe decir en que,
