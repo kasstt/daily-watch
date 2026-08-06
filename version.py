@@ -7,11 +7,50 @@ mensaje NO se borra.  Ademas lo podes ver cuando quieras en
 Ajustes -> Version y novedades, o escribiendo /version.
 """
 
-VERSION = "6.1"
-FECHA = "05-08-2026 12:30"
-TITULO = "quinta revision: se acabaron los silencios, la IA contesta de verdad y tu memoria sale de la vista de todos"
+VERSION = "6.2"
+FECHA = "05-08-2026 19:20"
+TITULO = "sexta revision: el aula deja de esconderte ramos, las clases por video te avisan antes y podes reiniciarlo vos desde el chat"
 
 CAMBIOS = [
+    "LO MAS IMPORTANTE: te agregaron a un curso en la plataforma del aula y "
+    "el bot no te dijo nada; el ramo ni siquiera aparecia en tu lista. Lo "
+    "que pasaba es que la plataforma le devolvia la puerta de entrada y el "
+    "bot lo entendia como 'no tenes ningun ramo', que para vos suena igual "
+    "que 'no hay noticias'. Ahora pide tus ramos por cuatro caminos "
+    "distintos, incluido el que la pagina usa por dentro, y si de verdad no "
+    "pudo entrar te lo dice en lugar de quedarse callado.",
+    "LO MAS IMPORTANTE: el profe empezo a poner las clases por "
+    "videoconferencia en una tabla aparte y el bot ni la miraba, asi que te "
+    "enterabas de casualidad. Ahora la revisa en cada vuelta, te avisa "
+    "apenas aparece una clase y te vuelve a tocar el hombro diez minutos "
+    "antes, con la clave y el enlace a mano. Ese recordatorio suena aunque "
+    "sea de madrugada: una clase perdida no se recupera.",
+    "Te decia que la ayuda escrita no estaba disponible y dos segundos "
+    "despues te contestaba perfecto. Tenia un solo interruptor para dos "
+    "preguntas distintas: si se pone a resumir solo en segundo plano, y si "
+    "te contesta cuando vos le escribis. Ahora son dos cosas separadas, y lo "
+    "que te muestra en Diagnostico es exactamente lo que va a hacer.",
+    "Pediste un boton para reiniciarlo desde el chat y ahi esta: Ajustes, "
+    "adentro de Diagnostico. Va solo en su fila para que no lo toques sin "
+    "querer, te pregunta antes, guarda toda su memoria y recien despues se "
+    "apaga. Si no llega a guardar, no se apaga: prefiere seguir andando "
+    "antes que perder lo que anoto. Y es tuyo nomas: lo que aprieta "
+    "cualquier otra persona se descarta en la puerta.",
+    "Buscabas un archivo escribiendo su nombre exacto y te contestaba que no "
+    "tenia nada, aunque 'descargar todo' te lo mandaba enseguida. Ahora, "
+    "cuando no encuentra, te cuenta cuantos archivos miro y en que fechas "
+    "busco, y te ofrece lo mas parecido que tiene: asi sabes si el problema "
+    "era el nombre o la fecha.",
+    "La revision a fondo dejaba escrito tu nombre completo tal como lo "
+    "muestra la plataforma, y tambien la clave de las reuniones y el nombre "
+    "del profe. Cualquiera que viera ese informe te tenia identificado. "
+    "Ahora tapa tu nombre aunque cambien las mayusculas o las tildes, y las "
+    "claves no se escriben mas.",
+    "Esa misma revision se quedaba corta: abria unas pocas paginas por ramo "
+    "y te dejaba un informe flaco. Ahora abre los enlaces del ramo uno por "
+    "uno, baja un nivel mas adentro y mira tambien la tabla de "
+    "videoconferencias. Lo unico que nunca toca son los enlaces que podrian "
+    "cambiar algo o cerrarte la sesion.",
     "LO MAS IMPORTANTE: tu memoria (los ramos, los avisos, tus pendientes) "
     "se estaba guardando dentro del repositorio, y ese repositorio esta "
     "abierto: cualquiera que supiera la direccion podia leerla. Ya la saque "
@@ -290,6 +329,17 @@ CAMBIOS = [
 ]
 
 A_PROBAR = [
+    "Anda a Ajustes -> Diagnostico y toca Reiniciar el bot: tiene que "
+    "preguntarte antes, avisarte que guardo todo y volver solo en unos "
+    "minutos",
+    "Fijate que en Diagnostico la linea de la ayuda escrita diga lo mismo "
+    "que pasa cuando le escribis una pregunta",
+    "Cuando el profe cargue una clase por videoconferencia, tiene que "
+    "llegarte el aviso apenas aparece y otro diez minutos antes",
+    "Si te agregan a un curso nuevo, abri Panel -> Ramos y fijate que este "
+    "solo, sin que tengas que pedir nada",
+    "Busca un archivo por su nombre exacto: si no lo encuentra, tiene que "
+    "decirte cuantos miro y ofrecerte lo mas parecido",
     "Entra a Ajustes y fijate que este el boton 'Cuando te hablo'. Ahi "
     "adentro cambia el dia y la hora del resumen.",
     "Aprieta +1 hora en una entrega de un profe. Tiene que decirte que la "
