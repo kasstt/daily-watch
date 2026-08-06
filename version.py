@@ -7,11 +7,47 @@ mensaje NO se borra.  Ademas lo podes ver cuando quieras en
 Ajustes -> Version y novedades, o escribiendo /version.
 """
 
-VERSION = "6.2"
-FECHA = "05-08-2026 19:20"
-TITULO = "sexta revision: el aula deja de esconderte ramos, las clases por video te avisan antes y podes reiniciarlo vos desde el chat"
+VERSION = "6.3"
+FECHA = "05-08-2026 21:40"
+TITULO = "septima revision: el reinicio ahora vuelve de verdad, buscar por nombre encuentra, y el ramo nuevo se mira entero en vez de mostrarte la tapa"
 
 CAMBIOS = [
+    "LO MAS IMPORTANTE: apretabas Reiniciar el bot y se apagaba, pero no "
+    "volvia nunca. Te quedabas sin bot y sin enterarte, que es justo lo peor "
+    "que puede pasar: un bot callado se ve igual que un bot sin noticias. Lo "
+    "que faltaba es que antes de apagarse pidiera turno para arrancar de "
+    "nuevo. Ahora lo pide primero: si se lo dan, guarda todo, te avisa que "
+    "vuelve y te saluda cuando despierta. Si no se lo dan, NO se apaga y te "
+    "explica por que prefirio quedarse.",
+    "LO MAS IMPORTANTE: buscabas un archivo por su nombre, ponias justo el "
+    "que era, y te decia que no lo tenia; despues pedias todo el ramo y ahi "
+    "aparecia. Pasaba porque el bot solo conocia el texto del enlace en la "
+    "pagina, que muchas veces es el nombre del paquete entero, no el del "
+    "documento que hay adentro. Ahora le pregunta a la plataforma como se "
+    "llama el archivo de verdad, sin bajarlo, se lo guarda, y busca tambien "
+    "por ese nombre.",
+    "LO MAS IMPORTANTE: en el ramo nuevo se cargaron muchisimas carpetas y "
+    "el bot te mostraba el ramo vacio. Se estaba quedando con las primeras "
+    "paginas y creia que ya habia visto todo. Ahora abre bastantes mas por "
+    "vuelta, va rotando para no mirar siempre las mismas, y cuando un ramo "
+    "es tan grande que no alcanzo a recorrerlo entero te lo dice, en vez de "
+    "mostrarte una lista corta como si fuera la lista completa.",
+    "La ayuda escrita se seguia contradiciendo, pero por otro motivo: cuando "
+    "se le acaba el cupo del dia te prometia volver en un rato. De dia el "
+    "calculo daba bien; pasadas las nueve de la noche te decia 'vuelvo en "
+    "dos horas y media' cuando en realidad no volvia hasta el otro dia. "
+    "Ahora distingue las dos cosas: si es un apuro de un minuto te dice los "
+    "minutos, y si el cupo se agoto por hoy te dice que vuelve manana.",
+    "La revision a fondo se quedaba muda cuando no lograba entrar a una "
+    "plataforma: te entregaba un informe corto y vos no tenias forma de "
+    "saber si es que no habia nada o si es que se quedo afuera. Ahora, si no "
+    "pudo entrar, escribe en que pantalla quedo y por que, con palabras "
+    "normales. Sigue sin tocar ningun enlace que pueda cambiar algo o "
+    "cerrarte la sesion.",
+    "Cuando buscas por nombre y no encuentra nada, ya no te deja con la "
+    "duda: te dice cuantos archivos tiene guardados de ese ramo y te ofrece "
+    "mirarlos, asi te das cuenta enseguida de si el que falta es el archivo "
+    "o el nombre que escribiste.",
     "LO MAS IMPORTANTE: te agregaron a un curso en la plataforma del aula y "
     "el bot no te dijo nada; el ramo ni siquiera aparecia en tu lista. Lo "
     "que pasaba es que la plataforma le devolvia la puerta de entrada y el "
@@ -329,6 +365,15 @@ CAMBIOS = [
 ]
 
 A_PROBAR = [
+    "Anda a Ajustes -> Diagnostico, toca Reiniciar el bot y confirma: tiene "
+    "que decirte que ya pidio el turno, y unos minutos despues escribirte "
+    "solo para avisarte que volvio",
+    "Busca un archivo escribiendo un pedazo de su nombre, uno que sepas que "
+    "esta adentro de un paquete: ahora tiene que encontrarlo",
+    "Abri el ramo que te agregaron ultimo y fijate que ya no este vacio; si "
+    "todavia le falta recorrerlo, tiene que decirtelo el mismo",
+    "De noche, si la ayuda escrita se quedo sin cupo, fijate que te diga que "
+    "vuelve manana y no que vuelve en un rato",
     "Anda a Ajustes -> Diagnostico y toca Reiniciar el bot: tiene que "
     "preguntarte antes, avisarte que guardo todo y volver solo en unos "
     "minutos",
