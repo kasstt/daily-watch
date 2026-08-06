@@ -62,7 +62,7 @@ PEDAZOS_COMUNES = ("http", "https", "www", "com", "org", "net", "edu", "gov",
 
 
 # Letras que cambian de forma segun como este escrito el texto.  Con esto
-# "Gutierrez" tambien tapa a "GUTI\u00c9RREZ".
+# "Rodriguez" tambien tapa a "RODR\u00cdGUEZ".
 VARIANTES = {"a": "[a\u00e1\u00e0\u00e2\u00e4]", "e": "[e\u00e9\u00e8\u00ea\u00eb]",
              "i": "[i\u00ed\u00ec\u00ee\u00ef]", "o": "[o\u00f3\u00f2\u00f4\u00f6]",
              "u": "[u\u00fa\u00f9\u00fb\u00fc]", "n": "[n\u00f1]", "c": "[c\u00e7]"}
@@ -702,6 +702,71 @@ def probar_aula(W, s, base, etiqueta):
                  "probar el camino que usa ella misma para pedir los ramos.")
 
 
+# --------------------------------------------- por que no pude entrar
+CAMINOS_DE_DIAGNOSTICO = ("/login/index.php", "/session/login", "/my/", "/")
+
+PISTAS_DE_PANTALLA = (
+    ('name="logintoken"', "trae la ficha de entrada"),
+    ('name="password"', "trae la casilla de clave"),
+    ("logout.php", "hay una sesion abierta"),
+    ("recaptcha", "PIDE CAPTCHA"),
+    ("captcha", "PIDE CAPTCHA"),
+    ("mantenimiento", "dice mantenimiento"),
+    ("maintenance", "dice mantenimiento"),
+    ("demasiados intentos", "HABLA DE DEMASIADOS INTENTOS"),
+    ("too many", "HABLA DE DEMASIADOS INTENTOS"),
+    ("bloquead", "HABLA DE CUENTA BLOQUEADA"),
+    ("suspendid", "HABLA DE CUENTA SUSPENDIDA"),
+)
+
+RE_AVISO_EN_PANTALLA = re.compile(
+    r"<[^>]*class=[\"'][^\"']*(?:alert|error|loginerror|notif)[^\"']*[\"'][^>]*>"
+    r"(.{4,400}?)</", re.I | re.S)
+
+
+def diagnostico_de_entrada(s, base):
+    """Cuando no se puede entrar, esto es lo unico que queda para saber POR QUE.
+
+    Antes la sonda escribia "NO PUDE" y saltaba a la otra plataforma: el
+    informe terminaba sin un solo dato de la unica parte que estaba rota, o
+    sea justo la que habia que arreglar.  Aca no se manda ninguna clave, no se
+    prueba ninguna combinacion y no se toca nada: solo se mira y se cuenta.
+    """
+    subtitulo("no pude entrar; esto es lo que alcance a ver")
+    escribir("(sin claves, sin tus datos y sin tocar nada de la plataforma)")
+    for camino in CAMINOS_DE_DIAGNOSTICO:
+        url = base + camino
+        if peligroso(url):
+            continue
+        try:
+            r = s.get(url, timeout=20, allow_redirects=True)
+        except Exception as e:
+            escribir("  %-20s -> no contesto (%s)" % (camino, type(e).__name__))
+            continue
+        html = getattr(r, "text", "") or ""
+        bajo = html.lower()
+        pistas = []
+        for pedazo, frase in PISTAS_DE_PANTALLA:
+            if pedazo in bajo and frase not in pistas:
+                pistas.append(frase)
+        escribir("  %-20s -> codigo %s | %d letras | %s"
+                 % (camino, getattr(r, "status_code", "?"), len(html),
+                    " / ".join(pistas) or "nada llamativo"))
+        fue_a = str(getattr(r, "url", "") or "")
+        corto = camino.strip("/")
+        if fue_a and corto and corto not in fue_a:
+            escribir("      me llevo a: %s" % fue_a)
+        for hallado in RE_AVISO_EN_PANTALLA.findall(html)[:3]:
+            frase = " ".join(re.sub(r"<[^>]+>", " ", hallado).split())
+            if len(frase) >= 6:
+                escribir("      la pagina dice: %s" % frase[:200])
+    escribir("")
+    escribir("como se lee esto: si arriba dice que trae la casilla de clave, la")
+    escribir("plataforma esta viva y el problema esta en la entrada. Si dice que")
+    escribir("hay una sesion abierta, quedo una sesion vieja colgada. Si ninguna")
+    escribir("contesto, la plataforma estaba caida en ese momento.")
+
+
 # ------------------------------------------------------------------ main
 def main():
     import secretos as SEC
@@ -770,6 +835,12 @@ def main():
         escribir("entrada : %s (%.1f s)" % ("ok" if entro else "NO PUDE",
                                             time.time() - t0))
         if not entro:
+            # Antes esto pasaba de largo y dejaba el informe sin un solo dato
+            # de la plataforma caida. Con "NO PUDE" a secas no se arregla nada.
+            try:
+                diagnostico_de_entrada(s, base)
+            except Exception as e:
+                escribir("tampoco pude mirar por que: %s" % type(e).__name__)
             continue
 
         if f.get("modo") == "aula":
