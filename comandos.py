@@ -788,7 +788,8 @@ def atender(estado, acc, ahora, espera=0):
             elif acc.get("preguntar"):
                 acc["preguntar"](resto)
             else:
-                r = "No tengo IA disponible ahora."
+                r = ("Ahora mismo no te puedo contestar eso. En el panel, "
+                     "en Probar la ayuda de IA, te digo por qu\u00e9.")
         elif cmd in ("ayuda", "help"):
             r = texto_ayuda()
         elif cmd == "resumen":
