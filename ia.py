@@ -314,6 +314,12 @@ def _descansando(estado, c):
         return ""
     minutos = int(falta / 60) + 1
     if motivo == "cupo":
+        # Contar minutos miente cuando lo que se acabo fue el cupo DEL DIA:
+        # a las once de la noche faltan dos horas para que cambie el dia, y
+        # decir "vuelve en 120 min" suena a que es cosa de esperar un rato.
+        # Por eso se recuerda que fue del dia en vez de deducirlo del reloj.
+        if ficha.get("del_dia"):
+            return "sin cupo por hoy, vuelve ma\u00f1ana"
         return "sin cupo, %s" % _en_cuanto(falta)
     if motivo == "cansada":
         return "fallo muchas veces, vuelve en %d min" % minutos
@@ -361,10 +367,12 @@ def _penitencia(estado, c, motivo, detalle=""):
     if ficha.get("marca") != _marca(c["clave"]):
         ficha.clear()
     fallas = ficha.get("fallas", 0) + 1
+    del_dia = False
     if motivo == "cupo":
         espera = CFG.IA.get("descanso_cupo_minutos", 60) * 60
         if CFG.IA.get("cupo_hasta_manana", True) and _es_cupo_del_dia(detalle):
             espera = max(espera, _segundos_hasta_manana())
+            del_dia = True
     elif motivo == "mala":
         espera = 0
     else:
@@ -373,7 +381,8 @@ def _penitencia(estado, c, motivo, detalle=""):
     if motivo != "mala" and fallas >= CFG.IA.get("fallas_para_apagar", 5):
         motivo, espera = "cansada", max(espera, 6 * 3600)
     ficha.update({"marca": _marca(c["clave"]), "motivo": motivo,
-                  "fallas": fallas, "hasta": time.time() + espera})
+                  "fallas": fallas, "hasta": time.time() + espera,
+                  "del_dia": del_dia})
     # Guardamos QUE dijo el servicio, corto y sin la clave, para que la
     # pantalla de prueba pueda explicarlo en vez de decir solo "no pude".
     if detalle:
@@ -408,7 +417,7 @@ def cuando_vuelve(estado=None):
     lista = claves()
     if not lista:
         return "no tengo ninguna clave de IA guardada"
-    peor, cupo, mala = 0, False, False
+    peor, cupo, mala, del_dia = 0, False, False, False
     for c in lista:
         ficha = _fichas(estado).get(c["nombre"]) or {}
         if ficha.get("marca") != _marca(c["clave"]):
@@ -422,7 +431,13 @@ def cuando_vuelve(estado=None):
         peor = max(peor, falta)
         if ficha.get("motivo") == "cupo":
             cupo = True
-    if cupo and peor > 3 * 3600:
+            if ficha.get("del_dia"):
+                del_dia = True
+    # Antes esto adivinaba "se acabo lo del dia" mirando si faltaban mas de
+    # tres horas.  Fallaba justo de noche, que es cuando mas importa: pasadas
+    # las nueve faltan menos de tres horas para el otro dia, y el bot prometia
+    # "un rato" cuando en realidad no volvia hasta manana.
+    if cupo and (del_dia or peor > 3 * 3600):
         return "hoy ya se me acab\u00f3 el cupo de res\u00famenes, vuelve ma\u00f1ana"
     if peor:
         return "estoy descansando un rato, %s" % _en_cuanto(peor)
@@ -534,7 +549,13 @@ def en_palabras(estado=None):
     if estado is not None:
         lista = claves()
         if lista and all(_descansando(estado, c) for c in lista):
-            return "descansando, %s" % cuando_vuelve(estado)
+            # OJO: aca NO se puede decir "no disponible" ni "apagada".  Cuando
+            # el dueno escribe algo, el bot igual lo intenta y casi siempre
+            # contesta bien.  Anunciar que esta caida y contestar perfecto un
+            # segundo despues es la contradiccion que lo hacia desconfiar del
+            # bot entero.  El descanso solo frena los resumenes automaticos.
+            return ("encendida para lo que me escribas \u00b7 los res\u00famenes "
+                    "autom\u00e1ticos descansan, %s" % cuando_vuelve(estado))
     return "encendida"
 
 
