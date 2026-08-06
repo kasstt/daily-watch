@@ -685,32 +685,234 @@ def leer_b64(s, base):
     return activos, [x["id"] for x in viejos]
 
 
-def entrar_aula(s, base, usuario, clave):
-    r0 = s.get(base + "/login/index.php", timeout=CFG.ESPERA_RED)
-    ficha = BeautifulSoup(r0.text, "html.parser").find("input", {"name": "logintoken"})
-    datos = {"anchor": "", "username": usuario, "password": clave}
-    if ficha:
-        datos["logintoken"] = ficha.get("value", "")
-    r = s.post(base + "/login/index.php", data=datos,
-               headers={"Referer": base + "/login/index.php"},
-               timeout=CFG.ESPERA_RED)
-    return "login/index.php" not in r.url
+RE_HORA_REUNION = re.compile(r"(\d{1,2})-(\d{1,2})-(\d{4})[\sT]+(\d{1,2}):(\d{2})")
 
 
-def leer_aula(s, base):
+def _entero(t):
+    numeros = re.findall(r"\d+", str(t or ""))
+    return int(numeros[0]) if numeros else 0
+
+
+def reuniones_b64(s, base, id_ramo):
+    """Las clases por videoconferencia que el ramo tiene programadas.
+
+    Esta pagina no publica archivos ni avisos escritos, asi que el explorador
+    la dejaba pasar como un enlace cualquiera. Adentro estaba la clase por
+    video con su hora y su clave: justo lo unico que no se puede perder.
+
+    Devuelve None si no se pudo mirar, para no confundir "no hay reuniones"
+    con "no llegue a mirar".
+    """
+    url = base + "/curso/meeting/show/" + str(id_ramo)
     try:
-        html = s.get(base + "/my/", timeout=CFG.ESPERA_RED).text
+        html = s.get(url, timeout=CFG.ESPERA_RED).text or ""
     except Exception:
-        return None, []
-    grupos, vistos = [], set()
-    for a in BeautifulSoup(html, "html.parser").select('a[href*="/course/view.php?id="]'):
-        m = re.search(r"id=(\d+)", a["href"])
-        nombre = limpio(a.get_text(" "))
-        if not m or not nombre or m.group(1) in vistos:
+        return None
+    if not html:
+        return None
+    salida = []
+    for fila in BeautifulSoup(html, "html.parser").select("tr"):
+        celdas = [limpio(c.get_text(" ")) for c in fila.select("td")]
+        if len(celdas) < 3:
             continue
+        donde = None
+        for i, c in enumerate(celdas):
+            if RE_HORA_REUNION.search(c):
+                donde = i
+                break
+        if donde is None:
+            continue
+        m = RE_HORA_REUNION.search(celdas[donde])
+        dia, mes, anio, hh, mm = (int(x) for x in m.groups())
+        try:
+            cuando = dt.datetime(anio, mes, dia, hh, mm)
+        except ValueError:
+            continue
+        if ZONA:
+            cuando = cuando.replace(tzinfo=ZONA)
+        resto = celdas[donde + 1:]
+        minutos = _entero(resto[0]) if resto else 0
+        tema = (resto[1] if len(resto) > 1 else "") or "Clase por videoconferencia"
+        anfitrion = resto[2] if len(resto) > 2 else ""
+        llave = ""
+        for c in resto[3:]:
+            pelado_c = c.replace(" ", "")
+            if pelado_c.isdigit() and 3 <= len(pelado_c) <= 12:
+                llave = pelado_c
+                break
+        enlace = ""
+        for a in fila.select("a[href]"):
+            destino = urljoin(base, a["href"])
+            if destino != url:
+                enlace = destino
+                break
+        salida.append({"cuando": cuando,
+                       "minutos": minutos or 60,
+                       "tema": tema[:120],
+                       "anfitrion": anfitrion[:80],
+                       "llave": llave,
+                       "enlace": enlace,
+                       "pagina": url})
+    return salida
+
+
+CAMINOS_DE_RAMOS = ("/my/", "/my/courses.php", "/user/profile.php",
+                    "/calendar/view.php?view=month")
+
+
+def _pantalla_de_entrar(html):
+    """La segunda plataforma contesta "todo bien" aunque te haya echado: la
+    pantalla de entrar viaja con el mismo codigo que una pagina buena, asi que
+    hay que reconocerla por lo que trae adentro."""
+    bajo = (html or "").lower()
+    if 'name="logintoken"' in bajo and 'name="password"' in bajo:
+        return True
+    if "loginform" in bajo and 'name="password"' in bajo:
+        return True
+    return "iniciar sesi" in bajo and "logout.php" not in bajo
+
+
+def _cerrar_sesion_colgada(s, base, html):
+    """Si quedo una sesion vieja abierta, la plataforma no deja pasar: muestra
+    "ya iniciaste sesion" y espera que elijas. El bot se comia esa pantalla
+    como si fuera clave equivocada y despues no leia ni un ramo."""
+    m = re.search(r"logout\.php\?sesskey=([A-Za-z0-9]+)", html or "")
+    if not m:
+        return False
+    try:
+        s.get(base + "/login/logout.php?sesskey=" + m.group(1),
+              timeout=CFG.ESPERA_RED)
+    except Exception:
+        return False
+    return True
+
+
+def _adentro_del_aula(s, base):
+    """Preguntar de verdad, pidiendo paginas que solo se ven estando adentro."""
+    for camino in ("/my/", "/user/profile.php"):
+        try:
+            r = s.get(base + camino, timeout=CFG.ESPERA_RED)
+        except Exception:
+            continue
+        html = r.text or ""
+        if "login/index.php" in (r.url or "") or _pantalla_de_entrar(html):
+            continue
+        return True, html
+    return False, ""
+
+
+def entrar_aula(s, base, usuario, clave):
+    """Entra y COMPRUEBA que entro.
+
+    Que la plataforma conteste bien no prueba nada: contesta igual de bien
+    cuando lo que manda es la pantalla de entrar. Dar por buena esa respuesta
+    es lo que dejaba al dueno sin una plataforma entera y sin enterarse.
+    """
+    for intento in (1, 2):
+        try:
+            r0 = s.get(base + "/login/index.php", timeout=CFG.ESPERA_RED)
+        except Exception:
+            return False
+        ficha = BeautifulSoup(r0.text, "html.parser").find("input", {"name": "logintoken"})
+        datos = {"anchor": "", "username": usuario, "password": clave}
+        if ficha:
+            datos["logintoken"] = ficha.get("value", "")
+        try:
+            r = s.post(base + "/login/index.php", data=datos,
+                       headers={"Referer": base + "/login/index.php"},
+                       timeout=CFG.ESPERA_RED)
+        except Exception:
+            return False
+        adentro, _ = _adentro_del_aula(s, base)
+        if adentro:
+            return True
+        # Una sola vez: cerrar la sesion colgada y volver a probar. Insistir
+        # mas veces puede terminar con la cuenta bloqueada.
+        if intento == 1 and _cerrar_sesion_colgada(s, base, r.text or ""):
+            continue
+        return False
+    return False
+
+
+def _ramos_en_html(base, html):
+    grupos, vistos = [], set()
+    for a in BeautifulSoup(html or "", "html.parser").select(
+            'a[href*="/course/view.php?id="]'):
+        m = re.search(r"id=(\d+)", a["href"])
+        if not m or m.group(1) in vistos:
+            continue
+        nombre = limpio(a.get_text(" ")) or ("curso " + m.group(1))
         vistos.add(m.group(1))
         grupos.append({"id": m.group(1), "nombre": nombre[:120],
                        "url": urljoin(base, a["href"])})
+    return grupos
+
+
+def _ramos_por_dentro(s, base, html):
+    """El mismo camino que usa la pagina para pedirse sus ramos.
+
+    La pantalla principal ya no viene escrita: se arma sola en el navegador,
+    asi que mirar el dibujo devolvia cero ramos aunque estuvieran todos.
+    """
+    m = re.search(r"sesskey[\"']?\s*[:=]\s*[\"']([A-Za-z0-9]+)", html or "")
+    if not m:
+        return []
+    cuerpo = [{"index": 0,
+               "methodname":
+                   "core_course_get_enrolled_courses_by_timeline_classification",
+               "args": {"offset": 0, "limit": 100, "classification": "all",
+                        "sort": "fullname"}}]
+    try:
+        r = s.post(base + "/lib/ajax/service.php?sesskey=" + m.group(1),
+                   json=cuerpo, timeout=CFG.ESPERA_RED)
+        datos = r.json()
+    except Exception:
+        return []
+    salida, vistos = [], set()
+    for tanda in (datos if isinstance(datos, list) else [datos]):
+        if not isinstance(tanda, dict) or tanda.get("error"):
+            continue
+        for c in ((tanda.get("data") or {}).get("courses") or []):
+            cid = str(c.get("id") or "")
+            if not cid or cid in vistos:
+                continue
+            vistos.add(cid)
+            salida.append({
+                "id": cid,
+                "nombre": (limpio(c.get("fullname") or "") or ("curso " + cid))[:120],
+                "url": c.get("viewurl") or (base + "/course/view.php?id=" + cid)})
+    return salida
+
+
+def leer_aula(s, base):
+    """Busca los ramos por varios caminos, no por uno solo.
+
+    Devolver una lista vacia cuando en realidad no se pudo mirar es la peor
+    respuesta posible: se parece a "no hay nada nuevo". Por eso, si ninguna
+    pagina se dejo abrir, esto contesta "no pude" y el bot avisa.
+    """
+    grupos, vistos, alguna_abrio = [], set(), False
+    for camino in CAMINOS_DE_RAMOS:
+        try:
+            html = s.get(base + camino, timeout=CFG.ESPERA_RED).text
+        except Exception:
+            continue
+        if _pantalla_de_entrar(html):
+            continue
+        alguna_abrio = True
+        for g in _ramos_en_html(base, html):
+            if g["id"] not in vistos:
+                vistos.add(g["id"])
+                grupos.append(g)
+        if not grupos:
+            for g in _ramos_por_dentro(s, base, html):
+                if g["id"] not in vistos:
+                    vistos.add(g["id"])
+                    grupos.append(g)
+        if grupos:
+            break
+    if not alguna_abrio:
+        return None, []
     for g in grupos:
         g["items"], g["firma"] = explorar_ramo(s, base, g)
     return grupos, []
@@ -1216,7 +1418,9 @@ class Vigilante(object):
         if cerrar is None:
             avisar, cerrar = self.animar("Pensando")
             avisar(CFG.ETAPAS["pensando"])
-        if not IA.disponible(self.estado):
+        # Se mira si se puede INTENTAR, no si esta "disponible": el descanso
+        # lo decide el bot solo, y no puede callarlo justo cuando le hablan.
+        if not IA.se_puede_intentar(self.estado):
             cerrar("No te puedo contestar: " + N.escapar(self.por_que_no_hay_ia()),
                    panel)
             return
@@ -1394,13 +1598,11 @@ class Vigilante(object):
                     elegidos, ultimo, nombre)
                 alcance = ""
             if not elegidos:
-                texto = "En <b>%s</b> no encontr\u00e9 archivos %s." % (
-                    N.escapar(aviso), rango)
-                if nombre:
-                    texto += "\nBusqu\u00e9 por nombre: <b>%s</b>." % N.escapar(nombre)
-                if total:
-                    texto += "\nS\u00ed tengo %d en otras fechas." % total
-                return None, texto
+                # Antes este camino ni siquiera mostraba los parecidos: el
+                # pedido hablado se moria en "no encontre nada".
+                return None, self._sin_resultados(
+                    clave, aviso, rango, nombre, tipo, total,
+                    alcance, desde, hasta)
             plan = {"accion": "mandar_archivos", "clave": clave,
                     "alcance": alcance, "desde": desde, "hasta": hasta,
                     "nombre": nombre, "tipo": tipo}
@@ -1609,7 +1811,7 @@ class Vigilante(object):
         panel = N.teclado([[("\U0001F431 Panel", "p:raiz")]])
         local = self.orden_local(texto)
 
-        if not IA.disponible(self.estado):
+        if not IA.se_puede_intentar(self.estado):
             if local:
                 plan, aviso = self.validar_orden(local)
                 if plan:
@@ -1734,7 +1936,7 @@ class Vigilante(object):
             "ultima": self.estado.get("ultima_corrida", "nunca")[-5:] or "nunca",
             "salud": "todo en orden" if not malas else "\u26A0\uFE0F %d problema(s)" % malas,
             "memoria": "gist privado" if self.modo == "gist" else "repositorio (reducida)",
-            "ia": "encendida" if IA.disponible(self.estado) else "apagada",
+            "ia": IA.en_palabras(self.estado),
             "silenciados": len(self.estado.get("callados", {})),
         }
 
@@ -1970,6 +2172,55 @@ class Vigilante(object):
         tope = getattr(CFG, "TOPE_ARCHIVOS_DE_UNA", 80)
         return elegidos[:tope], len(todos), rango_lindo(d, h)
 
+    def _sin_resultados(self, clave, titulo, rango, nombre, tipo, total,
+                        alcance="", desde="", hasta="", anotadas=0):
+        """El "no encontre nada", contado como es.
+
+        Antes, buscando en todo el ramo, contestaba "si tengo N en otras
+        fechas".  No habia otras fechas: lo que sobraba era el nombre.  El
+        dueno entendia que el archivo no existia, y existia.
+
+        Esta explicacion vive en un solo lugar para que las dos formas de
+        buscar, la escrita y la de botones, digan siempre lo mismo.
+        """
+        hubo_fechas = bool(desde or hasta or (alcance and alcance != "todo"))
+        cuantos = lambda n: "%d archivo%s" % (n, "" if n == 1 else "s")
+        texto = "En <b>%s</b> no encontr\u00e9 archivos %s." % (
+            N.escapar(titulo), rango)
+        if nombre:
+            texto += "\nBusqu\u00e9 por nombre: <b>%s</b>." % N.escapar(nombre)
+        if total and hubo_fechas:
+            texto += "\nS\u00ed tengo %d en otras fechas." % total
+        elif total and nombre:
+            # Aca ya mire el ramo entero: el nombre es lo unico que sobro.
+            texto += ("\nDel ramo tengo %s guardado%s, pero ninguno se llama "
+                      "as\u00ed." % (cuantos(total), "" if total == 1 else "s"))
+        elif total and tipo and tipo != "todo":
+            texto += ("\nDel ramo tengo %s, pero ninguno de ese tipo."
+                      % cuantos(total))
+        elif total:
+            texto += "\nDel ramo tengo %s guardado%s." % (
+                cuantos(total), "" if total == 1 else "s")
+        if nombre:
+            parecidos = self.parecidos_a(clave, nombre)
+            if parecidos:
+                texto += ("\nLo m\u00e1s parecido que tengo:\n"
+                          + "\n".join("\u2022 " + N.escapar(p) for p in parecidos)
+                          + "\nProb\u00e1 con una sola palabra de esas, o pedime "
+                            "todo el ramo y eleg\u00eds vos.")
+            elif total:
+                texto += ("\nSi ten\u00e9s el nombre a medias, pedime todo el ramo "
+                          "y lo busc\u00e1s en la lista.")
+        if not total:
+            if anotadas:
+                texto += ("\nTengo %d cosa%s anotada%s del ramo, pero ninguna es "
+                          "un archivo que se pueda bajar."
+                          % (anotadas, "" if anotadas == 1 else "s",
+                             "" if anotadas == 1 else "s"))
+            else:
+                texto += "\nTodav\u00eda no vi nada en este ramo."
+        return texto
+
     def parecidos_a(self, clave, nombre, cuantos=4):
         """Lo mas parecido a lo que escribiste.
 
@@ -2074,25 +2325,8 @@ class Vigilante(object):
         if not elegidos:
             anotadas = len([n for n in self.estado.get("novedades", [])
                             if n.get("c") == clave])
-            texto = "En <b>%s</b> no encontr\u00e9 archivos %s." % (
-                N.escapar(titulo), rango)
-            if nombre:
-                texto += "\nBusqu\u00e9 por nombre: <b>%s</b>." % N.escapar(nombre)
-                parecidos = self.parecidos_a(clave, nombre)
-                if parecidos:
-                    texto += ("\nLo m\u00e1s parecido que tengo:\n"
-                              + "\n".join("\u2022 " + N.escapar(p)
-                                          for p in parecidos)
-                              + "\nProb\u00e1 con una sola palabra de esas.")
-            if total:
-                texto += "\nS\u00ed tengo %d en otras fechas." % total
-            elif anotadas:
-                texto += ("\nTengo %d cosa%s anotada%s del ramo, pero ninguna es "
-                          "un archivo que se pueda bajar."
-                          % (anotadas, "" if anotadas == 1 else "s",
-                             "" if anotadas == 1 else "s"))
-            else:
-                texto += "\nTodav\u00eda no vi nada en este ramo."
+            texto = self._sin_resultados(clave, titulo, rango, nombre, tipo,
+                                         total, alcance, desde, hasta, anotadas)
             N.enviar(texto, botones=N.teclado([
                 [("\U0001F4C5 \u00daltimo mes", "a:baj:%s:mes" % clave),
                  ("\U0001F5C2 Todo el ramo", "a:baj:%s:todo" % clave)],
@@ -2578,6 +2812,17 @@ class Vigilante(object):
         if respuesta:
             lineas.append("\u2705 Le pregunt\u00e9 de verdad y me contest\u00f3.")
             lineas.append("La ayuda de IA est\u00e1 <b>funcionando</b>.")
+            # Esta pantalla decia "funcionando" mientras el chat contestaba
+            # "no la tengo disponible".  Si el interruptor esta en no, se dice
+            # aca mismo y se ofrece prenderla, en vez de dejar la duda.
+            if not self.cfg().get("ia", True):
+                lineas.append("")
+                lineas.append("\u26A0\uFE0F Pero la ten\u00e9s <b>apagada</b> vos: por eso, "
+                              "cuando me escrib\u00eds algo, te contesto que no "
+                              "puedo. Prendela con el bot\u00f3n de abajo.")
+                volver = N.teclado(
+                    [[("\U0001F9E0 Prender la ayuda de IA", "t:ia")],
+                     [("\u2B05\uFE0F Volver", "p:mas")]])
         else:
             lineas.append("\u26A0\uFE0F Le pregunt\u00e9 de verdad y <b>no</b> me contest\u00f3.")
             lineas.append(falla[:300] if falla
@@ -2592,6 +2837,41 @@ class Vigilante(object):
             lineas.append("No perd\u00e9s nada importante: los avisos, el material "
                           "y los plazos no dependen de esto.")
         cerrar("\n".join(lineas), volver)
+
+    def preguntar_si_reinicio(self):
+        """Reiniciar no borra nada, pero igual se pregunta.
+
+        Un boton que apaga el bot no puede dispararse de un dedazo, y menos
+        cuando lo que se apaga es justo lo que avisa las cosas.
+        """
+        N.enviar(
+            "\U0001F504 <b>\u00bfReinicio?</b>\n"
+            "Me apago y arranco de nuevo. <b>No pierdo nada</b>: los avisos, "
+            "el material y lo que ya te mand\u00e9 quedan igual.\n"
+            "Tardo unos minutos en volver.",
+            botones=N.teclado([
+                [("\U0001F504 S\u00ed, reinici\u00e1", "a:reiniciar_si")],
+                [("\u274C No, dejalo as\u00ed", "p:mas")]]))
+
+    def reiniciarme(self):
+        """Corta esta corrida para que empiece una limpia.
+
+        No borra la memoria: la guarda primero y despues se apaga.  El reloj
+        de GitHub vuelve a arrancar solo, asi que el bot vuelve sin que haya
+        que tocar nada.  Se avisa ANTES de apagarse, porque un bot que se
+        apaga en silencio es igual a un bot roto.
+        """
+        try:
+            self.guardar()
+        except Exception as e:
+            log("[!] guardando antes de reiniciar:", type(e).__name__)
+            N.enviar("\u26A0\uFE0F No pude guardar la memoria, as\u00ed que mejor no "
+                     "me apago. Prob\u00e1 de nuevo en un rato.")
+            return
+        self.reiniciar_pedido = True
+        N.enviar("\U0001F504 Listo, me apago y arranco de nuevo.\n"
+                 "Guard\u00e9 todo: no perd\u00e9s ning\u00fan aviso. Vuelvo solo en unos "
+                 "minutos y te aviso cuando est\u00e9 despierto.")
 
     def _solo_lo_ultimo(self, elegidos, modo, nombre=""):
         """Se queda con el ultimo archivo, o con todos los del ultimo dia que
@@ -2633,6 +2913,10 @@ class Vigilante(object):
                          + "\nTodo en orden, no hay nada que hacer.")
         elif cual == "probar_ia":
             self.probar_ia_ahora()
+        elif cual == "reiniciar":
+            self.preguntar_si_reinicio()
+        elif cual == "reiniciar_si":
+            self.reiniciarme()
         elif cual == "cerrar_compartir":
             cuantos = compartir.cerrar_todo(self.estado)
             N.enviar("\U0001F512 Listo, cerr\u00e9 %d permiso(s). Nadie ve nada "
@@ -2759,11 +3043,18 @@ class Vigilante(object):
                 log("[!] leyendo %s: %s" % (f["clave"], type(e).__name__))
                 continue
             if grupos is None:
+                self._aviso_de_plataforma(f, "no pude abrir sus paginas")
                 continue
+            if not grupos:
+                self._aviso_de_plataforma(f, "entre pero no vi ni un ramo")
+                continue
+            self.estado.get("plataformas_mudas", {}).pop(f["clave"], None)
             for g in grupos:
                 clave = huella("grupo", f["clave"], g["id"])
                 vistos_ahora.add(clave)
                 self._ver_grupo(clave, g, f)
+                if f.get("modo") == "b64":
+                    self.mirar_reuniones(clave, g, s, base)
                 # Entre ramo y ramo miro el chat un segundo.  Asi los botones
                 # siguen contestando aunque este en plena revision.
                 self.escuchar(0)
@@ -3036,6 +3327,143 @@ class Vigilante(object):
             lineas.append(N.escapar(cuerpo[:300]))
             lineas.append("")
         return "\n".join(lineas).strip()
+
+    # =================================================================
+    #  clases por videoconferencia anunciadas en la plataforma
+    # =================================================================
+    def mirar_reuniones(self, clave, g, s, base):
+        """Avisa las clases por video apenas aparecen publicadas.
+
+        Antes el bot solo se enteraba si el profesor ademas escribia un aviso.
+        Si la dejaba anotada nada mas, la clase pasaba y el dueno no se
+        enteraba nunca.
+        """
+        if not getattr(CFG, "AVISAR_CLASES", True):
+            return 0
+        try:
+            filas = reuniones_b64(s, base, g.get("id"))
+        except Exception as e:
+            log("[!] mirando las videoconferencias:", type(e).__name__)
+            return 0
+        if filas is None:
+            return 0
+        guardadas = self.estado.setdefault("reuniones", {})
+        hoy = ahora()
+        nombre = g.get("nombre") or self.nombre_de(clave)
+        cuantas = 0
+        for r in filas:
+            termina = r["cuando"] + dt.timedelta(minutes=r["minutos"])
+            marca = huella("reunion", clave,
+                           r["cuando"].strftime("%Y-%m-%d %H:%M"),
+                           pelado(r["tema"]))
+            if marca in guardadas:
+                continue
+            # Una clase que ya termino no se avisa: seria ruido puro y encima
+            # tardio. Se anota igual para no descubrirla de nuevo manana.
+            if termina < hoy:
+                guardadas[marca] = {"c": clave, "tema": r["tema"],
+                                    "cuando": r["cuando"].strftime("%Y-%m-%d %H:%M"),
+                                    "avisada": "", "recordada": "vieja"}
+                continue
+            lineas = ["\U0001F3A5 <b>Clase por videoconferencia</b>",
+                      "Ramo: <b>%s</b>" % N.escapar(nombre),
+                      N.escapar(r["tema"]),
+                      "\U0001F550 %s" % N.escapar(fecha_linda(r["cuando"]))]
+            if r["minutos"]:
+                lineas.append("\u23F3 Dura %d minutos" % r["minutos"])
+            if r["anfitrion"]:
+                lineas.append("\U0001F464 %s" % N.escapar(r["anfitrion"]))
+            if r["llave"]:
+                lineas.append("\U0001F511 Clave para entrar: <b>%s</b>"
+                              % N.escapar(r["llave"]))
+            lineas.append("\U0001F517 " + N.enlace("Abrir la sala",
+                                                   r["enlace"] or r["pagina"]))
+            lineas.append("<i>Te lo recuerdo %d minutos antes.</i>"
+                          % getattr(CFG, "MINUTOS_ANTES_DE_LA_CLASE", 10))
+            try:
+                mid = N.enviar("\n".join(lineas))
+            except Exception as e:
+                log("[!] no pude avisar la videoconferencia:", type(e).__name__)
+                continue
+            if not mid:
+                # Mandar primero, marcar despues: si el mensaje no salio, la
+                # clase tiene que seguir figurando como no avisada.
+                continue
+            guardadas[marca] = {
+                "c": clave, "tema": r["tema"], "llave": r["llave"],
+                "enlace": r["enlace"] or r["pagina"], "ramo": nombre,
+                "cuando": r["cuando"].strftime("%Y-%m-%d %H:%M"),
+                "avisada": hoy.strftime("%Y-%m-%d %H:%M"), "recordada": ""}
+            cuantas += 1
+        return cuantas
+
+    def recordar_reuniones(self):
+        """El golpecito en el hombro justo antes de la clase.
+
+        El aviso del dia anterior se pierde entre los mensajes; este llega
+        cuando todavia se puede hacer algo. No pide nada por internet, asi
+        que puede correr en cada vuelta del chat.
+        """
+        guardadas = self.estado.get("reuniones", {})
+        if not guardadas:
+            return 0
+        antes = getattr(CFG, "MINUTOS_ANTES_DE_LA_CLASE", 10)
+        hoy = ahora()
+        cuantas = 0
+        for marca, r in list(guardadas.items()):
+            cuando = leer_fecha(r.get("cuando", ""))
+            # Limpieza: lo de hace mas de dos dias no le sirve a nadie y la
+            # memoria no puede crecer para siempre.
+            if cuando and (hoy - cuando).total_seconds() > 2 * 86400:
+                guardadas.pop(marca, None)
+                continue
+            if not cuando or r.get("recordada"):
+                continue
+            faltan = (cuando - hoy).total_seconds()
+            if faltan > antes * 60 or faltan < -120:
+                continue
+            lineas = ["\u23F0 <b>Tu clase por video empieza en %d minutos</b>"
+                      % max(1, int(round(faltan / 60.0))),
+                      "Ramo: <b>%s</b>" % N.escapar(r.get("ramo", "")),
+                      N.escapar(r.get("tema", ""))]
+            if r.get("llave"):
+                lineas.append("\U0001F511 Clave: <b>%s</b>" % N.escapar(r["llave"]))
+            if r.get("enlace"):
+                lineas.append("\U0001F517 " + N.enlace("Entrar ahora", r["enlace"]))
+            try:
+                mid = N.enviar("\n".join(lineas))
+            except Exception as e:
+                log("[!] no pude recordar la clase:", type(e).__name__)
+                continue
+            if not mid:
+                continue
+            r["recordada"] = hoy.strftime("%Y-%m-%d %H:%M")
+            cuantas += 1
+        if cuantas:
+            self.guardar()
+        return cuantas
+
+    def _aviso_de_plataforma(self, f, motivo):
+        """Una plataforma que no se puede leer tiene que doler.
+
+        Quedarse callado deja al dueno creyendo que no hay novedades, cuando
+        la verdad es que el bot no miro nada. Se avisa una vez cada seis horas:
+        insistir en cada vuelta seria castigo.
+        """
+        mudas = self.estado.setdefault("plataformas_mudas", {})
+        antes = mudas.get(f["clave"]) or {}
+        ultimo = leer_fecha(antes.get("cuando", ""))
+        if (ultimo and antes.get("motivo") == motivo
+                and (ahora() - ultimo).total_seconds() < 6 * 3600):
+            return
+        mudas[f["clave"]] = {"cuando": ahora().strftime("%Y-%m-%d %H:%M"),
+                             "motivo": motivo}
+        N.enviar(
+            "\u26a0\ufe0f <b>No estoy viendo la plataforma %s</b>\n"
+            "%s.\n\nLo sigo intentando en la pr\u00f3xima vuelta. Si esto se "
+            "repite, entr\u00e1 vos desde el navegador y fijate si te pide algo "
+            "(cambiar la clave, aceptar un aviso o cerrar otra sesi\u00f3n)."
+            % (N.escapar(f["clave"]), motivo.capitalize()))
 
     def _aviso_de_clave(self, f):
         """La plataforma rechazo el usuario o la clave.
@@ -3755,6 +4183,9 @@ class Vigilante(object):
                                      ("\U0001F431 Panel", "p:raiz")]]))
 
     def arranque(self):
+        # Bandera del boton de reinicio.  Vive solo mientras dura la corrida:
+        # si se guardara en la memoria, el bot arrancaria apagandose.
+        self.reiniciar_pedido = False
         N.publicar_menu(comandos.MENU)
         self.avisar_version()
         if not self.estado.get("arrancado"):
@@ -3874,8 +4305,19 @@ class Vigilante(object):
                         N.enviar("\U0001F440 Mir\u00e9 las dos plataformas: %s"
                                  % ("%d cosas nuevas" % nuevas if nuevas > 0
                                     else "nada nuevo por ahora."), silencioso=True)
+            # El recordatorio no puede esperar a la proxima revision: si la
+            # clase empieza en diez minutos, diez minutos es todo lo que hay.
+            try:
+                self.recordar_reuniones()
+            except Exception as e:
+                log("[!] recordando la clase:", type(e).__name__)
             # se queda escuchando el chat: por eso los botones contestan al toque
             self.escuchar(CFG.ESPERA_CHAT)
+            if getattr(self, "reiniciar_pedido", False):
+                # Cortar aca es todo el reinicio: la memoria ya quedo guardada
+                # y el reloj de GitHub levanta una corrida nueva y limpia.
+                log("[i] reinicio pedido desde el chat")
+                break
         self.guardar()
 
 
